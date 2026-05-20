@@ -1,0 +1,206 @@
+// RenewalIQ - Enterprise Renewal Analytics Platform
+// Prisma Schema v1.0
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum ATRStatus {
+  RENEWED
+  EXPIRED
+  PENDING
+  AT_RISK
+  UNKNOWN
+}
+
+enum Theatre {
+  AMERICAS
+  EMEA
+  APJC
+  UNKNOWN
+}
+
+enum UploadStatus {
+  PENDING
+  PROCESSING
+  COMPLETE
+  ERROR
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  ANALYST
+  VIEWER
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+// ─── Core Models ─────────────────────────────────────────────────────────────
+
+model RenewalRecord {
+  id                          String   @id @default(cuid())
+
+  // ASC / Partner
+  ascName                     String?
+  ascId                       String?
+
+  // Status
+  atrStatus                   ATRStatus @default(UNKNOWN)
+  inqTrPullInPushOutQuarter   String?
+  renewedSupportType          String?
+  sameSapAsc                  String?
+
+  // Fiscal Quarter
+  expiredFiscalQtr            String?
+  renewedFiscalQtr            String?
+  reportingFiscalQtr          String?
+
+  // Product
+  authCode                    String?
+  productCode                 String?
+  renewedProductCode          String?
+  productGroup                String?
+  targetQty                   Int      @default(0)
+  renewedQty                  Int      @default(0)
+
+  // Geography
+  country                     String?
+  theatre                     Theatre  @default(UNKNOWN)
+  endCustomerCountry          String?
+
+  // Dates
+  expirationDate              DateTime?
+
+  // Customer / Channel
+  endCustomerName             String?
+  distiName                   String?
+  reselName                   String?
+  serialNumber                String?
+  sellingEntity               String?
+
+  // Computed / Analytics
+  daysToExpire                Int?
+  renewalRate                 Float?
+  severity                    Severity?
+
+  // Relations
+  uploadBatchId               String?
+  uploadBatch                 UploadBatch? @relation(fields: [uploadBatchId], references: [id], onDelete: SetNull)
+  customerId                  String?
+  customer                    Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  productId                   String?
+  product                     Product?     @relation(fields: [productId], references: [id], onDelete: SetNull)
+  distributorId               String?
+  distributor                 Distributor? @relation(fields: [distributorId], references: [id], onDelete: SetNull)
+
+  // Metadata
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@index([atrStatus])
+  @@index([expirationDate])
+  @@index([theatre])
+  @@index([country])
+  @@index([reportingFiscalQtr])
+  @@index([endCustomerName])
+  @@index([productCode])
+  @@index([uploadBatchId])
+  @@index([severity])
+}
+
+model UploadBatch {
+  id              String       @id @default(cuid())
+  fileName        String
+  fileSize        Int
+  recordCount     Int          @default(0)
+  duplicatesFound Int          @default(0)
+  status          UploadStatus @default(PENDING)
+  errorMessage    String?
+  uploadedById    String?
+  uploadedBy      User?        @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  records         RenewalRecord[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Customer {
+  id                String          @id @default(cuid())
+  name              String          @unique
+  country           String?
+  theatre           Theatre         @default(UNKNOWN)
+  totalContracts    Int             @default(0)
+  renewedContracts  Int             @default(0)
+  expiredContracts  Int             @default(0)
+  renewalRate       Float?
+  riskScore         Float?
+  lastRenewalDate   DateTime?
+  nextExpirationDate DateTime?
+  records           RenewalRecord[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([theatre])
+  @@index([renewalRate])
+}
+
+model Product {
+  id           String          @id @default(cuid())
+  code         String          @unique
+  name         String?
+  productGroup String?
+  records      RenewalRecord[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([productGroup])
+}
+
+model Distributor {
+  id        String          @id @default(cuid())
+  name      String          @unique
+  country   String?
+  theatre   Theatre         @default(UNKNOWN)
+  records   RenewalRecord[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+}
+
+model Region {
+  id        String   @id @default(cuid())
+  country   String   @unique
+  theatre   Theatre
+  region    String?
+  subRegion String?
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  name         String?
+  role         UserRole      @default(ANALYST)
+  passwordHash String?
+  lastLogin    DateTime?
+  uploads      UploadBatch[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([role])
+}
