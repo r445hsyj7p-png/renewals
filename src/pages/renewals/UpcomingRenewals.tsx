@@ -27,7 +27,7 @@ export function UpcomingRenewals() {
   const [statusFilter, setStatusFilter] = React.useState<string>('all')
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSize] = React.useState(25)
-  const [sortField, setSortField] = React.useState<keyof RenewalRecord>('daysToExpire')
+  const [sortField, setSortField] = React.useState<keyof RenewalRecord>('endCustomerName')
   const [sortDesc, setSortDesc] = React.useState(false)
 
   // Debounce search
@@ -45,10 +45,21 @@ export function UpcomingRenewals() {
       status: statusFilter !== 'all' ? [statusFilter] : [],
     })
     data = [...data].sort((a, b) => {
+      // Primary sort: user-selected field
       const av = a[sortField] ?? ''
       const bv = b[sortField] ?? ''
       if (av < bv) return sortDesc ? 1 : -1
       if (av > bv) return sortDesc ? -1 : 1
+      // Secondary: customer name (groups all SNs of a customer together)
+      const cn1 = (a.endCustomerName ?? '').toLowerCase()
+      const cn2 = (b.endCustomerName ?? '').toLowerCase()
+      if (cn1 < cn2) return -1
+      if (cn1 > cn2) return 1
+      // Tertiary: serial number
+      const sn1 = a.serialNumber ?? ''
+      const sn2 = b.serialNumber ?? ''
+      if (sn1 < sn2) return -1
+      if (sn1 > sn2) return 1
       return 0
     })
     return data
@@ -150,6 +161,7 @@ export function UpcomingRenewals() {
             <thead>
               <tr className="border-b border-border bg-muted/50">
                 <Th onClick={() => handleSort('endCustomerName')} active={sortField === 'endCustomerName'} desc={sortDesc}>Customer</Th>
+                <Th onClick={() => handleSort('serialNumber')} active={sortField === 'serialNumber'} desc={sortDesc}>Serial Number</Th>
                 <Th onClick={() => handleSort('productCode')} active={sortField === 'productCode'} desc={sortDesc}>Product</Th>
                 <Th onClick={() => handleSort('productGroup')} active={sortField === 'productGroup'} desc={sortDesc} className="hidden md:table-cell">Group</Th>
                 <Th onClick={() => handleSort('theatre')} active={sortField === 'theatre'} desc={sortDesc} className="hidden lg:table-cell">Theatre</Th>
@@ -157,13 +169,13 @@ export function UpcomingRenewals() {
                 <Th onClick={() => handleSort('atrStatus')} active={sortField === 'atrStatus'} desc={sortDesc}>Status</Th>
                 <Th onClick={() => handleSort('daysToExpire')} active={sortField === 'daysToExpire'} desc={sortDesc}>Expires</Th>
                 <Th onClick={() => handleSort('severity')} active={sortField === 'severity'} desc={sortDesc}>Risk</Th>
-                <Th className="hidden xl:table-cell">Qty</Th>
+                <Th className="hidden xl:table-cell" onClick={() => handleSort('renewedQty')} active={sortField === 'renewedQty'} desc={sortDesc}>Qty</Th>
               </tr>
             </thead>
             <tbody>
               {paginated.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-muted-foreground text-sm">
+                  <td colSpan={10} className="py-12 text-center text-muted-foreground text-sm">
                     No renewals match your filters
                   </td>
                 </tr>
@@ -173,6 +185,9 @@ export function UpcomingRenewals() {
                     <td className="px-4 py-3">
                       <div className="font-medium truncate max-w-[160px]">{r.endCustomerName || '—'}</div>
                       <div className="text-xs text-muted-foreground truncate max-w-[160px]">{r.distiName || '—'}</div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="font-mono text-xs font-medium">{r.serialNumber || '—'}</div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-mono text-xs">{r.productCode || '—'}</div>
