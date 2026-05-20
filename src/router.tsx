@@ -18,8 +18,6 @@ export const router = createBrowserRouter([
       { index: true, element: <ExecutiveDashboard /> },
 
       // Overview
-      { path: 'overview/kpi', element: <PlaceholderPage title="KPI Overview" /> },
-      { path: 'overview/trends', element: <PlaceholderPage title="Renewal Trends" /> },
       { path: 'overview/forecasting', element: <ForecastingPage /> },
 
       // Renewals
@@ -28,7 +26,6 @@ export const router = createBrowserRouter([
 
       // Customers
       { path: 'customers/analytics', element: <CustomerAnalytics /> },
-      { path: 'customers/top', element: <PlaceholderPage title="Top Customers" /> },
 
       // Products
       { path: 'products/analytics', element: <ProductAnalytics /> },

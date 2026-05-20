@@ -1,9 +1,9 @@
 import * as React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, TrendingUp, BarChart3, RefreshCw, AlertTriangle,
-  Users, Package, Activity, Settings, Upload, Database, LogOut,
-  Moon, Sun, ChevronDown, Building2, ShieldCheck, Layers,
+  LayoutDashboard, BarChart3, RefreshCw,
+  Users, Package, Settings, Upload, Database, LogOut,
+  Moon, Sun, ChevronDown, ShieldCheck, Layers,
   ChevronRight, X, Menu
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -34,8 +34,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Overview',
     items: [
       { label: 'Executive Dashboard', href: '/', icon: LayoutDashboard },
-      { label: 'KPI Overview', href: '/overview/kpi', icon: Activity },
-      { label: 'Renewal Trends', href: '/overview/trends', icon: TrendingUp },
       { label: 'Forecasting', href: '/overview/forecasting', icon: BarChart3 },
     ],
   },
@@ -50,7 +48,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Customers',
     items: [
       { label: 'Customer Analytics', href: '/customers/analytics', icon: Users },
-      { label: 'Top Customers', href: '/customers/top', icon: Building2 },
     ],
   },
   {
