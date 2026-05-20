@@ -1,16 +1,14 @@
 import * as React from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, TrendingUp, BarChart3, RefreshCw, AlertTriangle,
   Users, Package, Activity, Settings, Upload, Database, LogOut,
   Moon, Sun, ChevronDown, Building2, ShieldCheck, Layers,
-  PieChart, Globe, MapPin, FileBarChart, GitBranch,
   ChevronRight, X, Menu
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuLabel,
@@ -24,7 +22,6 @@ interface NavItem {
   href: string
   icon: React.ElementType
   badge?: number
-  adminOnly?: boolean
 }
 
 interface NavGroup {
@@ -46,8 +43,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Renewals',
     items: [
       { label: 'Upcoming Renewals', href: '/renewals/upcoming', icon: RefreshCw },
-      { label: 'Expiring Contracts', href: '/renewals/expiring', icon: AlertTriangle },
-      { label: 'Renewal Pipeline', href: '/renewals/pipeline', icon: GitBranch },
       { label: 'Risk Renewals', href: '/renewals/risks', icon: ShieldCheck },
     ],
   },
@@ -56,33 +51,21 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Customer Analytics', href: '/customers/analytics', icon: Users },
       { label: 'Top Customers', href: '/customers/top', icon: Building2 },
-      { label: 'Churn Risks', href: '/customers/churn', icon: AlertTriangle },
     ],
   },
   {
     label: 'Products',
     items: [
       { label: 'Product Analytics', href: '/products/analytics', icon: Package },
-      { label: 'Product Trends', href: '/products/trends', icon: TrendingUp },
-      { label: 'Renewal Rates', href: '/products/rates', icon: PieChart },
-    ],
-  },
-  {
-    label: 'Analytics',
-    items: [
-      { label: 'Forecasting', href: '/analytics/forecasting', icon: FileBarChart },
-      { label: 'Quarterly Trends', href: '/analytics/quarterly', icon: BarChart3 },
-      { label: 'Theatre Analysis', href: '/analytics/theatre', icon: Globe },
-      { label: 'Country Analysis', href: '/analytics/country', icon: MapPin },
     ],
   },
   {
     label: 'Administration',
     items: [
-      { label: 'Import Data', href: '/admin/import', icon: Upload, adminOnly: true },
-      { label: 'Upload History', href: '/admin/uploads', icon: Layers, adminOnly: true },
-      { label: 'Data Management', href: '/admin/data', icon: Database, adminOnly: true },
-      { label: 'System Settings', href: '/admin/settings', icon: Settings, adminOnly: true },
+      { label: 'Import Data', href: '/admin/import', icon: Upload },
+      { label: 'Upload History', href: '/admin/uploads', icon: Layers },
+      { label: 'Data Management', href: '/admin/data', icon: Database },
+      { label: 'System Settings', href: '/admin/settings', icon: Settings },
     ],
   },
 ]
@@ -105,7 +88,6 @@ export function AppSidebar() {
 
   return (
     <>
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/60 lg:hidden"
@@ -113,7 +95,6 @@ export function AppSidebar() {
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={cn(
           'fixed left-0 top-0 z-50 flex h-full flex-col border-r border-sidebar-border bg-sidebar-background transition-all duration-300',
@@ -139,7 +120,12 @@ export function AppSidebar() {
           )}
           <div className="flex items-center gap-1">
             {!collapsed && (
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent lg:hidden" onClick={() => setMobileOpen(false)}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent lg:hidden"
+                onClick={() => setMobileOpen(false)}
+              >
                 <X className="h-4 w-4" />
               </Button>
             )}

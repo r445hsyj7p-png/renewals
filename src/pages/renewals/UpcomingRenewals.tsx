@@ -1,10 +1,10 @@
 import * as React from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Search, Filter, Download, RefreshCw, SlidersHorizontal, X } from 'lucide-react'
+import { Search, Download, X, CalendarDays } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { StatusBadge, SeverityBadge } from '@/components/charts/severity-badge'
 import { useRenewalStore } from '@/store/renewal.store'
@@ -16,41 +16,90 @@ import type { RenewalRecord } from '@/types/renewal.types'
 
 const PAGE_SIZES = [25, 50, 100]
 
+// Quick date preset buttons
+const DATE_PRESETS = [
+  { label: 'Next 30d', days: 30 },
+  { label: 'Next 60d', days: 60 },
+  { label: 'Next 90d', days: 90 },
+  { label: 'Next 180d', days: 180 },
+  { label: 'Expired', days: -1 },
+]
+
+function toDateInputValue(date: Date): string {
+  return date.toISOString().split('T')[0]
+}
+
 export function UpcomingRenewals() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const { records: storeRecords, filters, setFilters } = useRenewalStore()
+  const [searchParams] = useSearchParams()
+  const { records: storeRecords, filters } = useRenewalStore()
   const records = storeRecords.length > 0 ? storeRecords : mockRenewals
 
   const [search, setSearch] = React.useState(searchParams.get('search') ?? filters.search)
   const [debouncedSearch, setDebouncedSearch] = React.useState(search)
-  const [theatreFilter, setTheatreFilter] = React.useState<string>('all')
+  const [productGroupFilter, setProductGroupFilter] = React.useState<string>('all')
   const [statusFilter, setStatusFilter] = React.useState<string>('all')
+  const [dateFrom, setDateFrom] = React.useState<string>('')
+  const [dateTo, setDateTo] = React.useState<string>('')
+  const [activePreset, setActivePreset] = React.useState<number | null>(null)
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSize] = React.useState(25)
   const [sortField, setSortField] = React.useState<keyof RenewalRecord>('endCustomerName')
   const [sortDesc, setSortDesc] = React.useState(false)
 
-  // Debounce search
   React.useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300)
     return () => clearTimeout(timer)
   }, [search])
+
+  const applyPreset = (days: number) => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (days === -1) {
+      // Expired: from beginning of time to yesterday
+      setDateFrom('')
+      setDateTo(toDateInputValue(new Date(today.getTime() - 86400000)))
+    } else {
+      const to = new Date(today.getTime() + days * 86400000)
+      setDateFrom(toDateInputValue(today))
+      setDateTo(toDateInputValue(to))
+    }
+    setActivePreset(days)
+    setPageIndex(0)
+  }
+
+  const clearDateFilter = () => {
+    setDateFrom('')
+    setDateTo('')
+    setActivePreset(null)
+    setPageIndex(0)
+  }
 
   const enriched = React.useMemo(() => RenewalService.enrichRecords(records), [records])
 
   const filtered = React.useMemo(() => {
     let data = RenewalService.applyFilters(enriched, {
       search: debouncedSearch,
-      theatre: theatreFilter !== 'all' ? [theatreFilter] : [],
+      productGroup: productGroupFilter !== 'all' ? [productGroupFilter] : [],
       status: statusFilter !== 'all' ? [statusFilter] : [],
     })
+
+    // Date range filter on expirationDate
+    if (dateFrom || dateTo) {
+      data = data.filter(r => {
+        if (!r.expirationDate) return false
+        const d = r.expirationDate.slice(0, 10)
+        if (dateFrom && d < dateFrom) return false
+        if (dateTo && d > dateTo) return false
+        return true
+      })
+    }
+
     data = [...data].sort((a, b) => {
-      // Primary sort: user-selected field
       const av = a[sortField] ?? ''
       const bv = b[sortField] ?? ''
       if (av < bv) return sortDesc ? 1 : -1
       if (av > bv) return sortDesc ? -1 : 1
-      // Secondary: customer name (groups all SNs of a customer together)
+      // Secondary: customer name
       const cn1 = (a.endCustomerName ?? '').toLowerCase()
       const cn2 = (b.endCustomerName ?? '').toLowerCase()
       if (cn1 < cn2) return -1
@@ -58,99 +107,178 @@ export function UpcomingRenewals() {
       // Tertiary: serial number
       const sn1 = a.serialNumber ?? ''
       const sn2 = b.serialNumber ?? ''
-      if (sn1 < sn2) return -1
-      if (sn1 > sn2) return 1
-      return 0
+      return sn1 < sn2 ? -1 : sn1 > sn2 ? 1 : 0
     })
+
     return data
-  }, [enriched, debouncedSearch, theatreFilter, statusFilter, sortField, sortDesc])
+  }, [enriched, debouncedSearch, productGroupFilter, statusFilter, dateFrom, dateTo, sortField, sortDesc])
 
   const pageCount = Math.ceil(filtered.length / pageSize)
   const paginated = filtered.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)
 
-  const theatres = React.useMemo(() => [...new Set(records.map(r => r.theatre).filter(Boolean))], [records])
-  const statuses = React.useMemo(() => [...new Set(records.map(r => r.atrStatus).filter(Boolean))], [records])
+  const productGroups = React.useMemo(
+    () => [...new Set(records.map(r => r.productGroup).filter(Boolean))].sort(),
+    [records]
+  )
+  const statuses = React.useMemo(
+    () => [...new Set(records.map(r => r.atrStatus).filter(Boolean))].sort(),
+    [records]
+  )
 
   const handleSort = (field: keyof RenewalRecord) => {
     if (sortField === field) setSortDesc(!sortDesc)
     else { setSortField(field); setSortDesc(false) }
-  }
-
-  const handleExport = () => {
-    XLSXService.exportToXLSX(filtered, `renewals-${new Date().toISOString().split('T')[0]}.xlsx`)
-  }
-
-  const clearFilters = () => {
-    setSearch('')
-    setTheatreFilter('all')
-    setStatusFilter('all')
     setPageIndex(0)
   }
 
-  const hasActiveFilters = search || theatreFilter !== 'all' || statusFilter !== 'all'
+  const hasActiveFilters = search || productGroupFilter !== 'all' || statusFilter !== 'all' || dateFrom || dateTo
+
+  const clearAll = () => {
+    setSearch('')
+    setProductGroupFilter('all')
+    setStatusFilter('all')
+    clearDateFilter()
+  }
 
   return (
     <div className="flex flex-col gap-4 p-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Upcoming Renewals</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {filtered.length.toLocaleString()} renewals found
+            {filtered.length.toLocaleString()} of {records.length.toLocaleString()} renewals
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleExport}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => XLSXService.exportToXLSX(filtered, `renewals-${new Date().toISOString().split('T')[0]}.xlsx`)}
+        >
           <Download className="h-4 w-4" /> Export
         </Button>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search customer, product, country..."
-            className="pl-8 h-8"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPageIndex(0) }}
-          />
-          {search && (
-            <button className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setSearch('')}>
+      {/* Filter bar */}
+      <div className="flex flex-col gap-2">
+        {/* Row 1: search + dropdowns + clear */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[220px] max-w-sm">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search customer, SN, product..."
+              className="pl-8 pr-8 h-8"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPageIndex(0) }}
+            />
+            {search && (
+              <button
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                onClick={() => { setSearch(''); setPageIndex(0) }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <Select value={productGroupFilter} onValueChange={v => { setProductGroupFilter(v); setPageIndex(0) }}>
+            <SelectTrigger className="h-8 w-40">
+              <SelectValue placeholder="Product Group" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Groups</SelectItem>
+              {productGroups.map(pg => (
+                <SelectItem key={pg} value={pg}>{pg}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={statusFilter} onValueChange={v => { setStatusFilter(v); setPageIndex(0) }}>
+            <SelectTrigger className="h-8 w-36">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {statuses.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-foreground" onClick={clearAll}>
+              <X className="h-3.5 w-3.5" /> Clear all
+            </Button>
+          )}
+
+          <div className="ml-auto">
+            <Select value={String(pageSize)} onValueChange={v => { setPageSize(Number(v)); setPageIndex(0) }}>
+              <SelectTrigger className="h-8 w-20">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZES.map(s => <SelectItem key={s} value={String(s)}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* Row 2: date range */}
+        <div className="flex flex-wrap items-center gap-2">
+          <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
+
+          {/* Quick presets */}
+          {DATE_PRESETS.map(p => (
+            <button
+              key={p.days}
+              onClick={() => {
+                if (activePreset === p.days) {
+                  clearDateFilter()
+                } else {
+                  applyPreset(p.days)
+                }
+              }}
+              className={cn(
+                'h-7 rounded-md border px-2.5 text-xs font-medium transition-colors',
+                activePreset === p.days
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border bg-transparent text-muted-foreground hover:border-primary/50 hover:text-foreground'
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+
+          <span className="text-xs text-muted-foreground">or custom:</span>
+
+          {/* From */}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-muted-foreground">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); setActivePreset(null); setPageIndex(0) }}
+              className="h-7 rounded-md border border-border bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring [color-scheme:dark]"
+            />
+          </div>
+
+          {/* To */}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-muted-foreground">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => { setDateTo(e.target.value); setActivePreset(null); setPageIndex(0) }}
+              className="h-7 rounded-md border border-border bg-transparent px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring [color-scheme:dark]"
+            />
+          </div>
+
+          {(dateFrom || dateTo) && (
+            <button
+              onClick={clearDateFilter}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
               <X className="h-3.5 w-3.5" />
             </button>
           )}
-        </div>
-        <Select value={theatreFilter} onValueChange={(v) => { setTheatreFilter(v); setPageIndex(0) }}>
-          <SelectTrigger className="h-8 w-36">
-            <SelectValue placeholder="Theatre" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Theatres</SelectItem>
-            {theatres.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPageIndex(0) }}>
-          <SelectTrigger className="h-8 w-36">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            {statuses.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={clearFilters}>
-            <X className="h-3.5 w-3.5" /> Clear
-          </Button>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPageIndex(0) }}>
-            <SelectTrigger className="h-8 w-20">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAGE_SIZES.map(s => <SelectItem key={s} value={String(s)}>{s}</SelectItem>)}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 
@@ -164,12 +292,12 @@ export function UpcomingRenewals() {
                 <Th onClick={() => handleSort('serialNumber')} active={sortField === 'serialNumber'} desc={sortDesc}>Serial Number</Th>
                 <Th onClick={() => handleSort('productCode')} active={sortField === 'productCode'} desc={sortDesc}>Product</Th>
                 <Th onClick={() => handleSort('productGroup')} active={sortField === 'productGroup'} desc={sortDesc} className="hidden md:table-cell">Group</Th>
-                <Th onClick={() => handleSort('theatre')} active={sortField === 'theatre'} desc={sortDesc} className="hidden lg:table-cell">Theatre</Th>
                 <Th onClick={() => handleSort('country')} active={sortField === 'country'} desc={sortDesc} className="hidden lg:table-cell">Country</Th>
                 <Th onClick={() => handleSort('atrStatus')} active={sortField === 'atrStatus'} desc={sortDesc}>Status</Th>
-                <Th onClick={() => handleSort('daysToExpire')} active={sortField === 'daysToExpire'} desc={sortDesc}>Expires</Th>
+                <Th onClick={() => handleSort('expirationDate')} active={sortField === 'expirationDate'} desc={sortDesc}>Expires</Th>
+                <Th onClick={() => handleSort('daysToExpire')} active={sortField === 'daysToExpire'} desc={sortDesc}>Days</Th>
                 <Th onClick={() => handleSort('severity')} active={sortField === 'severity'} desc={sortDesc}>Risk</Th>
-                <Th className="hidden xl:table-cell" onClick={() => handleSort('renewedQty')} active={sortField === 'renewedQty'} desc={sortDesc}>Qty</Th>
+                <Th onClick={() => handleSort('renewedQty')} active={sortField === 'renewedQty'} desc={sortDesc} className="hidden xl:table-cell">Qty</Th>
               </tr>
             </thead>
             <tbody>
@@ -180,14 +308,14 @@ export function UpcomingRenewals() {
                   </td>
                 </tr>
               ) : (
-                paginated.map((r) => (
+                paginated.map(r => (
                   <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-medium truncate max-w-[160px]">{r.endCustomerName || '—'}</div>
                       <div className="text-xs text-muted-foreground truncate max-w-[160px]">{r.distiName || '—'}</div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="font-mono text-xs font-medium">{r.serialNumber || '—'}</div>
+                      <span className="font-mono text-xs font-medium">{r.serialNumber || '—'}</span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-mono text-xs">{r.productCode || '—'}</div>
@@ -199,27 +327,26 @@ export function UpcomingRenewals() {
                       <span className="text-xs text-muted-foreground">{r.productGroup || '—'}</span>
                     </td>
                     <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className="text-xs">{r.theatre || '—'}</span>
-                    </td>
-                    <td className="px-4 py-3 hidden lg:table-cell">
                       <span className="text-xs">{r.country || '—'}</span>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={r.atrStatus} />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="text-xs text-muted-foreground">
+                        {r.expirationDate ? formatDate(r.expirationDate) : '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
                       {r.daysToExpire !== undefined ? (
-                        <div>
-                          <div className={cn('text-sm font-medium tabular-nums',
-                            r.daysToExpire <= 0 ? 'text-red-500' :
-                            r.daysToExpire <= 30 ? 'text-red-500' :
-                            r.daysToExpire <= 60 ? 'text-orange-500' :
-                            r.daysToExpire <= 90 ? 'text-yellow-500' : 'text-muted-foreground'
-                          )}>
-                            {r.daysToExpire <= 0 ? 'Expired' : `${r.daysToExpire}d`}
-                          </div>
-                          <div className="text-xs text-muted-foreground">{r.expirationDate ? formatDate(r.expirationDate) : ''}</div>
-                        </div>
+                        <span className={cn('text-sm font-medium tabular-nums',
+                          r.daysToExpire <= 0 ? 'text-red-500' :
+                          r.daysToExpire <= 30 ? 'text-red-500' :
+                          r.daysToExpire <= 60 ? 'text-orange-500' :
+                          r.daysToExpire <= 90 ? 'text-yellow-500' : 'text-muted-foreground'
+                        )}>
+                          {r.daysToExpire <= 0 ? 'Expired' : `${r.daysToExpire}d`}
+                        </span>
                       ) : '—'}
                     </td>
                     <td className="px-4 py-3">
