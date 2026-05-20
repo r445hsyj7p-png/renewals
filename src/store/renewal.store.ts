@@ -13,6 +13,8 @@ interface RenewalStore {
   setRecords: (records: RenewalRecord[]) => void
   addRecords: (records: RenewalRecord[], batch: UploadBatch) => void
   updateRecord: (id: string, updates: Partial<RenewalRecord>) => void
+  dismissRecord: (id: string, reason: 'renewed' | 'skipped') => void
+  restoreRecord: (id: string) => void
   removeRecord: (id: string) => void
   removeBatch: (batchId: string) => void
   setFilters: (filters: Partial<FilterState>) => void
@@ -55,6 +57,24 @@ export const useRenewalStore = create<RenewalStore>()(
       updateRecord: (id, updates) =>
         set(state => ({
           records: state.records.map(r => (r.id === id ? { ...r, ...updates } : r)),
+        })),
+
+      dismissRecord: (id, reason) =>
+        set(state => ({
+          records: state.records.map(r =>
+            r.id === id
+              ? { ...r, dismissed: true, dismissedReason: reason, dismissedAt: new Date().toISOString() }
+              : r
+          ),
+        })),
+
+      restoreRecord: (id) =>
+        set(state => ({
+          records: state.records.map(r =>
+            r.id === id
+              ? { ...r, dismissed: false, dismissedReason: undefined, dismissedAt: undefined }
+              : r
+          ),
         })),
 
       removeRecord: (id) =>

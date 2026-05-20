@@ -34,6 +34,10 @@ export interface RenewalRecord {
   renewalRate?: number
   uploadBatchId?: string
   createdAt?: string
+  // Dismissal — set locally, survives re-import via serialNumber+productCode key
+  dismissed?: boolean
+  dismissedReason?: 'renewed' | 'skipped'
+  dismissedAt?: string
 }
 
 export interface UploadBatch {
