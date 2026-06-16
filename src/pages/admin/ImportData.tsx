@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileSpreadsheet, CheckCircle, AlertCircle, X, Loader2, Trash2, Download } from 'lucide-react'
+import { Upload, FileSpreadsheet, CheckCircle, AlertCircle, X, Loader2, Trash2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { useRenewalStore } from '@/store/renewal.store'
 import { XLSXService } from '@/services/xlsx.service'
 import { RenewalService } from '@/services/renewal.service'
-import { formatDate } from '@/lib/utils'
+import { formatDate, cn } from '@/lib/utils'
 import type { UploadBatch } from '@/types/renewal.types'
 
 interface UploadTask {
@@ -21,14 +21,30 @@ interface UploadTask {
   error?: string
 }
 
-export function ImportData() {
-  const { records, addRecords, uploadBatches, removeBatch, clearAll } = useRenewalStore()
-  const [tasks, setTasks] = React.useState<UploadTask[]>([])
-  const [isProcessing, setIsProcessing] = React.useState(false)
+interface EnrichmentTask {
+  id: string
+  file: File
+  status: 'pending' | 'parsing' | 'complete' | 'error'
+  progress: number
+  result?: { totalRows: number; matched: number; unmatched: number }
+  error?: string
+}
 
-  const updateTask = (id: string, updates: Partial<UploadTask>) => {
+type Tab = 'renewal' | 'manufacturer'
+
+export function ImportData() {
+  const { records, addRecords, uploadBatches, removeBatch, clearAll, enrichRecords } = useRenewalStore()
+  const [activeTab, setActiveTab] = React.useState<Tab>('renewal')
+  const [tasks, setTasks] = React.useState<UploadTask[]>([])
+  const [enrichmentTasks, setEnrichmentTasks] = React.useState<EnrichmentTask[]>([])
+  const [isProcessing, setIsProcessing] = React.useState(false)
+  const [isEnriching, setIsEnriching] = React.useState(false)
+
+  const updateTask = (id: string, updates: Partial<UploadTask>) =>
     setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t))
-  }
+
+  const updateEnrichmentTask = (id: string, updates: Partial<EnrichmentTask>) =>
+    setEnrichmentTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t))
 
   const processFiles = async (files: File[]) => {
     const newTasks: UploadTask[] = files.map(f => ({
@@ -67,6 +83,43 @@ export function ImportData() {
     setIsProcessing(false)
   }
 
+  const processEnrichmentFiles = async (files: File[]) => {
+    const newTasks: EnrichmentTask[] = files.map(f => ({
+      id: Math.random().toString(36).slice(2),
+      file: f,
+      status: 'pending' as const,
+      progress: 0,
+    }))
+    setEnrichmentTasks(prev => [...prev, ...newTasks])
+    setIsEnriching(true)
+
+    for (const task of newTasks) {
+      updateEnrichmentTask(task.id, { status: 'parsing', progress: 30 })
+      try {
+        await new Promise(r => setTimeout(r, 200))
+        updateEnrichmentTask(task.id, { progress: 60 })
+        const { data, totalRows } = await XLSXService.parseEnrichmentFile(task.file)
+        updateEnrichmentTask(task.id, { progress: 85 })
+
+        const matched = records.filter(r => r.serialNumber && data.has(r.serialNumber)).length
+        const unmatched = data.size - matched
+
+        enrichRecords(data)
+        updateEnrichmentTask(task.id, {
+          status: 'complete',
+          progress: 100,
+          result: { totalRows, matched, unmatched },
+        })
+        toast.success(`Enrichment complete: ${matched} records updated from ${task.file.name}`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error'
+        updateEnrichmentTask(task.id, { status: 'error', progress: 0, error: msg })
+        toast.error(`Failed to process ${task.file.name}: ${msg}`)
+      }
+    }
+    setIsEnriching(false)
+  }
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -76,7 +129,20 @@ export function ImportData() {
     disabled: isProcessing,
   })
 
-  const removeTask = (id: string) => setTasks(prev => prev.filter(t => t.id !== id))
+  const {
+    getRootProps: getEnrichRootProps,
+    getInputProps: getEnrichInputProps,
+    isDragActive: isEnrichDragActive,
+  } = useDropzone({
+    accept: {
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
+    },
+    onDrop: processEnrichmentFiles,
+    disabled: isEnriching,
+  })
+
+  const enrichedCount = records.filter(r => r.enrichedAt).length
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -94,6 +160,7 @@ export function ImportData() {
               if (confirm('Clear all imported data?')) {
                 clearAll()
                 setTasks([])
+                setEnrichmentTasks([])
                 toast.info('All data cleared')
               }
             }}
@@ -110,7 +177,7 @@ export function ImportData() {
             { label: 'Total Records', value: records.length },
             { label: 'Upload Batches', value: uploadBatches.length },
             { label: 'Unique Customers', value: new Set(records.map(r => r.endCustomerName)).size },
-            { label: 'Products', value: new Set(records.map(r => r.productCode)).size },
+            { label: 'Enriched Records', value: enrichedCount },
           ].map(s => (
             <Card key={s.label}>
               <CardContent className="p-4">
@@ -122,131 +189,301 @@ export function ImportData() {
         </div>
       )}
 
-      {/* Drop Zone */}
-      <Card>
-        <CardContent className="p-0">
-          <div
-            {...getRootProps()}
-            className={`flex min-h-48 cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed p-8 transition-colors ${
-              isDragActive
-                ? 'border-primary bg-primary/5'
-                : 'border-border hover:border-primary/50 hover:bg-muted/30'
-            } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-border">
+        {([
+          { key: 'renewal', label: 'Renewal-Daten' },
+          { key: 'manufacturer', label: 'Hersteller-Daten' },
+        ] as { key: Tab; label: string }[]).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={cn(
+              'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+              activeTab === tab.key
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
           >
-            <input {...getInputProps()} />
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-              {isProcessing ? (
-                <Loader2 className="h-7 w-7 text-primary animate-spin" />
-              ) : (
-                <Upload className="h-7 w-7 text-primary" />
-              )}
-            </div>
-            <div className="text-center">
-              <p className="font-semibold text-sm">
-                {isDragActive ? 'Drop files here' : 'Drag & drop XLSX files'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">or click to browse • .xlsx and .xls supported</p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">
-              {['ASCNAME', 'ENDCUSTOMERNAME', 'PRODUCTCODE', 'EXPIRATIONDATE', 'THEATRE', 'COUNTRY'].map(col => (
-                <code key={col} className="rounded bg-muted px-1.5 py-0.5 font-mono">{col}</code>
-              ))}
-              <span className="text-muted-foreground">+ 18 more columns</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            {tab.label}
+            {tab.key === 'manufacturer' && enrichedCount > 0 && (
+              <span className="ml-2 rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                {enrichedCount}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-      {/* Upload Queue */}
-      {tasks.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Upload Queue</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {tasks.map(task => (
-              <div key={task.id} className="rounded-lg border border-border p-3">
-                <div className="flex items-center gap-3">
-                  <FileSpreadsheet className="h-5 w-5 shrink-0 text-muted-foreground" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{task.file.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(task.file.size / 1024).toFixed(1)} KB
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {task.status === 'parsing' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-                    {task.status === 'complete' && <CheckCircle className="h-4 w-4 text-green-500" />}
-                    {task.status === 'error' && <AlertCircle className="h-4 w-4 text-red-500" />}
-                    {task.status !== 'parsing' && (
-                      <button onClick={() => removeTask(task.id)} className="text-muted-foreground hover:text-foreground">
-                        <X className="h-4 w-4" />
-                      </button>
-                    )}
-                  </div>
+      {activeTab === 'renewal' && (
+        <>
+          {/* Drop Zone */}
+          <Card>
+            <CardContent className="p-0">
+              <div
+                {...getRootProps()}
+                className={`flex min-h-48 cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed p-8 transition-colors ${
+                  isDragActive
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <input {...getInputProps()} />
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+                  {isProcessing ? (
+                    <Loader2 className="h-7 w-7 text-primary animate-spin" />
+                  ) : (
+                    <Upload className="h-7 w-7 text-primary" />
+                  )}
                 </div>
-                {task.status === 'parsing' && (
-                  <div className="mt-2">
-                    <Progress value={task.progress} className="h-1" />
-                  </div>
-                )}
-                {task.status === 'complete' && task.result && (
-                  <div className="mt-2 flex gap-2">
-                    <Badge variant="success">{task.result.recordCount} records</Badge>
-                    {task.result.duplicates > 0 && (
-                      <Badge variant="medium">{task.result.duplicates} duplicates</Badge>
-                    )}
-                  </div>
-                )}
-                {task.status === 'error' && (
-                  <p className="mt-2 text-xs text-red-500">{task.error}</p>
-                )}
+                <div className="text-center">
+                  <p className="font-semibold text-sm">
+                    {isDragActive ? 'Drop files here' : 'Drag & drop XLSX files'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">or click to browse • .xlsx and .xls supported</p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">
+                  {['ASCNAME', 'ENDCUSTOMERNAME', 'PRODUCTCODE', 'EXPIRATIONDATE', 'THEATRE', 'COUNTRY'].map(col => (
+                    <code key={col} className="rounded bg-muted px-1.5 py-0.5 font-mono">{col}</code>
+                  ))}
+                  <span className="text-muted-foreground">+ 18 more columns</span>
+                </div>
               </div>
-            ))}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          {/* Upload Queue */}
+          {tasks.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Upload Queue</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {tasks.map(task => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    onRemove={() => setTasks(prev => prev.filter(t => t.id !== task.id))}
+                  />
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Upload History */}
+          {uploadBatches.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Upload History</CardTitle>
+                <CardDescription className="text-xs">{uploadBatches.length} batches imported</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border">
+                  {uploadBatches.map(batch => (
+                    <BatchRow key={batch.id} batch={batch} onRemove={removeBatch} />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Expected Columns Reference */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold">Expected XLSX Columns</CardTitle>
+              <CardDescription className="text-xs">Your file should contain these column headers</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {[
+                  'ASCNAME', 'ASCID', 'ATRSTATUS', 'INQTRPULLINPUSHOUTQUARTER',
+                  'RENEWEDSUPPORTTYPE', 'SAMESAPASC', 'EXPIREDFISCALQTR', 'RENEWEDFISCALQTR',
+                  'AUTHCODE', 'PRODUCTCODE', 'RENEWEDPRODUCTCODE', 'TARGETQTY',
+                  'RENEWEDQTY', 'REPORTINGFISCALQTR', 'COUNTRY', 'THEATRE',
+                  'EXPIRATIONDATE', 'ENDCUSTOMERNAME', 'ENDCUSTOMERCOUNTRY', 'DISTINAME',
+                  'RESELNAME', 'SERIALNUMBER', 'selling_entity', 'PRODUCTGROUP',
+                ].map(col => (
+                  <code key={col} className="rounded bg-muted px-2 py-1 font-mono text-xs truncate">
+                    {col}
+                  </code>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
       )}
 
-      {/* Upload History */}
-      {uploadBatches.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Upload History</CardTitle>
-            <CardDescription className="text-xs">{uploadBatches.length} batches imported</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border">
-              {uploadBatches.map(batch => (
-                <BatchRow key={batch.id} batch={batch} onRemove={removeBatch} />
-              ))}
+      {activeTab === 'manufacturer' && (
+        <>
+          {records.length === 0 && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
+              Lade zuerst Renewal-Daten hoch, bevor du Hersteller-Daten importierst.
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
 
-      {/* Expected Columns Reference */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Expected XLSX Columns</CardTitle>
-          <CardDescription className="text-xs">Your file should contain these column headers</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-            {[
-              'ASCNAME', 'ASCID', 'ATRSTATUS', 'INQTRPULLINPUSHOUTQUARTER',
-              'RENEWEDSUPPORTTYPE', 'SAMESAPASC', 'EXPIREDFISCALQTR', 'RENEWEDFISCALQTR',
-              'AUTHCODE', 'PRODUCTCODE', 'RENEWEDPRODUCTCODE', 'TARGETQTY',
-              'RENEWEDQTY', 'REPORTINGFISCALQTR', 'COUNTRY', 'THEATRE',
-              'EXPIRATIONDATE', 'ENDCUSTOMERNAME', 'ENDCUSTOMERCOUNTRY', 'DISTINAME',
-              'RESELNAME', 'SERIALNUMBER', 'selling_entity', 'PRODUCTGROUP',
-            ].map(col => (
-              <code key={col} className="rounded bg-muted px-2 py-1 font-mono text-xs truncate">
-                {col}
-              </code>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+          {/* Enrichment Drop Zone */}
+          <Card>
+            <CardContent className="p-0">
+              <div
+                {...getEnrichRootProps()}
+                className={`flex min-h-48 cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed p-8 transition-colors ${
+                  isEnrichDragActive
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                } ${isEnriching || records.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <input {...getEnrichInputProps()} disabled={isEnriching || records.length === 0} />
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+                  {isEnriching ? (
+                    <Loader2 className="h-7 w-7 text-primary animate-spin" />
+                  ) : (
+                    <Sparkles className="h-7 w-7 text-primary" />
+                  )}
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold text-sm">
+                    {isEnrichDragActive ? 'Drop file here' : 'Hersteller-Datei (XLSX) einlesen'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Daten werden per Serial Number mit bestehenden Records verknüpft
+                  </p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">
+                  {['Serial Number', 'Renewal Rep', 'TCV', 'End Of Sale Date', 'Product Platform'].map(col => (
+                    <code key={col} className="rounded bg-muted px-1.5 py-0.5 font-mono">{col}</code>
+                  ))}
+                  <span>+ 26 more columns</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Enrichment Tasks */}
+          {enrichmentTasks.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Enrichment Queue</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {enrichmentTasks.map(task => (
+                  <EnrichmentTaskRow
+                    key={task.id}
+                    task={task}
+                    onRemove={() => setEnrichmentTasks(prev => prev.filter(t => t.id !== task.id))}
+                  />
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Manufacturer Columns Reference */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold">Erwartete Hersteller-Spalten</CardTitle>
+              <CardDescription className="text-xs">Spaltenköpfe müssen exakt übereinstimmen</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {[
+                  'Serial Number', 'Renewal Rep', 'TCV', 'Account Owner',
+                  'account_code', 'Ent Area', 'Ent Region', 'Ent District',
+                  'Ent Territory Name', 'Contract Number', 'Opportunity Id', 'Contract Id',
+                  'Product Platform', 'Product Suite', 'Product Solution', 'Product Class',
+                  'Subscription Start Date', 'Subscription Term In Days', 'End Of Sale Date', 'End Of Support Date',
+                  'Device Shipdate', 'Subscription Qty', 'Subscription Net Price', 'Primary Quote Status',
+                  'Latest Quote Status', 'Primary Quote Forecast Category', 'Latest Quote Forecast Category',
+                  'Quoted_Unquoted', 'Open ATR Acv', 'Primary Quote TCV', 'Latest Quote TCV',
+                ].map(col => (
+                  <code key={col} className="rounded bg-muted px-2 py-1 font-mono text-xs truncate">
+                    {col}
+                  </code>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  )
+}
+
+function TaskRow({ task, onRemove }: { task: UploadTask; onRemove: () => void }) {
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="flex items-center gap-3">
+        <FileSpreadsheet className="h-5 w-5 shrink-0 text-muted-foreground" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{task.file.name}</p>
+          <p className="text-xs text-muted-foreground">{(task.file.size / 1024).toFixed(1)} KB</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {task.status === 'parsing' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+          {task.status === 'complete' && <CheckCircle className="h-4 w-4 text-green-500" />}
+          {task.status === 'error' && <AlertCircle className="h-4 w-4 text-red-500" />}
+          {task.status !== 'parsing' && (
+            <button onClick={onRemove} className="text-muted-foreground hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+      {task.status === 'parsing' && (
+        <div className="mt-2">
+          <Progress value={task.progress} className="h-1" />
+        </div>
+      )}
+      {task.status === 'complete' && task.result && (
+        <div className="mt-2 flex gap-2">
+          <Badge variant="success">{task.result.recordCount} records</Badge>
+          {task.result.duplicates > 0 && (
+            <Badge variant="medium">{task.result.duplicates} duplicates</Badge>
+          )}
+        </div>
+      )}
+      {task.status === 'error' && (
+        <p className="mt-2 text-xs text-red-500">{task.error}</p>
+      )}
+    </div>
+  )
+}
+
+function EnrichmentTaskRow({ task, onRemove }: { task: EnrichmentTask; onRemove: () => void }) {
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="flex items-center gap-3">
+        <Sparkles className="h-5 w-5 shrink-0 text-primary" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{task.file.name}</p>
+          <p className="text-xs text-muted-foreground">{(task.file.size / 1024).toFixed(1)} KB</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {task.status === 'parsing' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+          {task.status === 'complete' && <CheckCircle className="h-4 w-4 text-green-500" />}
+          {task.status === 'error' && <AlertCircle className="h-4 w-4 text-red-500" />}
+          {task.status !== 'parsing' && (
+            <button onClick={onRemove} className="text-muted-foreground hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+      {task.status === 'parsing' && (
+        <div className="mt-2">
+          <Progress value={task.progress} className="h-1" />
+        </div>
+      )}
+      {task.status === 'complete' && task.result && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Badge variant="info">{task.result.totalRows} rows parsed</Badge>
+          <Badge variant="success">{task.result.matched} records enriched</Badge>
+          {task.result.unmatched > 0 && (
+            <Badge variant="medium">{task.result.unmatched} unmatched SNs</Badge>
+          )}
+        </div>
+      )}
+      {task.status === 'error' && (
+        <p className="mt-2 text-xs text-red-500">{task.error}</p>
+      )}
     </div>
   )
 }

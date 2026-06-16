@@ -21,6 +21,7 @@ interface RenewalStore {
   resetFilters: () => void
   setSelectedBatch: (batchId: string | null) => void
   clearAll: () => void
+  enrichRecords: (data: Map<string, Partial<RenewalRecord>>) => void
 }
 
 const defaultFilters: FilterState = {
@@ -99,6 +100,15 @@ export const useRenewalStore = create<RenewalStore>()(
 
       clearAll: () =>
         set({ records: [], uploadBatches: [], filters: defaultFilters, selectedBatchId: null }),
+
+      enrichRecords: (data) =>
+        set(state => ({
+          records: state.records.map(r => {
+            const enrichment = r.serialNumber ? data.get(r.serialNumber) : undefined
+            if (!enrichment) return r
+            return { ...r, ...enrichment, enrichedAt: new Date().toISOString() }
+          }),
+        })),
     }),
     {
       name: 'renewal-store',

@@ -38,6 +38,38 @@ export interface RenewalRecord {
   dismissed?: boolean
   dismissedReason?: 'renewed' | 'skipped'
   dismissedAt?: string
+  // Manufacturer enrichment (joined by Serial Number)
+  renewalRep?: string
+  accountCode?: string
+  accountOwner?: string
+  entArea?: string
+  entRegion?: string
+  entDistrict?: string
+  entTerritory?: string
+  contractNumber?: string
+  opportunityId?: string
+  contractId?: string
+  productPlatform?: string
+  productSuite?: string
+  productSolution?: string
+  productClass?: string
+  subscriptionStartDate?: string
+  subscriptionTermDays?: number
+  endOfSaleDate?: string
+  endOfSupportDate?: string
+  deviceShipDate?: string
+  subscriptionQty?: number
+  subscriptionNetPrice?: number
+  tcv?: number
+  primaryQuoteStatus?: string
+  latestQuoteStatus?: string
+  primaryQuoteForecastCategory?: string
+  latestQuoteForecastCategory?: string
+  quotedUnquoted?: string
+  openAtrAcv?: number
+  primaryQuoteTcv?: number
+  latestQuoteTcv?: number
+  enrichedAt?: string
 }
 
 export interface UploadBatch {

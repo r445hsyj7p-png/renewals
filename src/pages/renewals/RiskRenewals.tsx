@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { AlertTriangle, Clock, TrendingDown, Search, Download, X } from 'lucide-react'
+import { AlertTriangle, Clock, TrendingDown, Search, Download, X, Sparkles } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { useRenewalStore } from '@/store/renewal.store'
 import { RenewalService } from '@/services/renewal.service'
 import { XLSXService } from '@/services/xlsx.service'
 import { mockRenewals } from '@/data/mock-renewals'
-import { formatDate, cn } from '@/lib/utils'
+import { formatDate, formatCurrency, cn } from '@/lib/utils'
 import type { RenewalRecord } from '@/types/renewal.types'
 
 function sortByCustomerThenSN(records: RenewalRecord[]): RenewalRecord[] {
@@ -71,6 +71,8 @@ export function RiskRenewals() {
     [critical, high, atRisk]
   )
 
+  const hasEnrichment = enriched.some(r => r.enrichedAt)
+
   const handleExport = () => {
     XLSXService.exportToXLSX(allRisk, `risk-renewals-${new Date().toISOString().split('T')[0]}.xlsx`)
   }
@@ -84,9 +86,17 @@ export function RiskRenewals() {
             {allRisk.length} renewals requiring immediate attention
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleExport}>
-          <Download className="h-4 w-4" /> Export
-        </Button>
+        <div className="flex items-center gap-2">
+          {hasEnrichment && (
+            <div className="flex items-center gap-1.5 text-xs text-primary">
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Hersteller-Daten geladen</span>
+            </div>
+          )}
+          <Button variant="outline" size="sm" onClick={handleExport}>
+            <Download className="h-4 w-4" /> Export
+          </Button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -149,7 +159,7 @@ export function RiskRenewals() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <RiskTable records={critical} />
+            <RiskTable records={critical} hasEnrichment={hasEnrichment} />
           </CardContent>
         </Card>
       )}
@@ -165,7 +175,7 @@ export function RiskRenewals() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <RiskTable records={high} />
+            <RiskTable records={high} hasEnrichment={hasEnrichment} />
           </CardContent>
         </Card>
       )}
@@ -181,7 +191,7 @@ export function RiskRenewals() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <RiskTable records={atRisk} />
+            <RiskTable records={atRisk} hasEnrichment={hasEnrichment} />
           </CardContent>
         </Card>
       )}
@@ -201,7 +211,7 @@ export function RiskRenewals() {
   )
 }
 
-function RiskTable({ records }: { records: RenewalRecord[] }) {
+function RiskTable({ records, hasEnrichment }: { records: RenewalRecord[]; hasEnrichment: boolean }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -213,6 +223,12 @@ function RiskTable({ records }: { records: RenewalRecord[] }) {
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden md:table-cell">Distributor</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden lg:table-cell">Country</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden lg:table-cell">Theatre</th>
+            {hasEnrichment && (
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden xl:table-cell">Renewal Rep</th>
+            )}
+            {hasEnrichment && (
+              <th className="px-4 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden xl:table-cell">TCV</th>
+            )}
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Status</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Expires</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Risk</th>
@@ -248,8 +264,8 @@ function RiskTable({ records }: { records: RenewalRecord[] }) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="font-mono text-xs">{r.productCode || '—'}</div>
-                  {r.productGroup && (
-                    <div className="text-xs text-muted-foreground">{r.productGroup}</div>
+                  {(r.productPlatform || r.productGroup) && (
+                    <div className="text-xs text-muted-foreground">{r.productPlatform || r.productGroup}</div>
                   )}
                 </td>
                 <td className="px-4 py-3 hidden md:table-cell">
@@ -261,6 +277,21 @@ function RiskTable({ records }: { records: RenewalRecord[] }) {
                 <td className="px-4 py-3 hidden lg:table-cell">
                   <span className="text-xs">{r.theatre || '—'}</span>
                 </td>
+                {hasEnrichment && (
+                  <td className="px-4 py-3 hidden xl:table-cell">
+                    <span className="text-xs truncate max-w-[120px] block">{r.renewalRep || '—'}</span>
+                  </td>
+                )}
+                {hasEnrichment && (
+                  <td className="px-4 py-3 text-right hidden xl:table-cell">
+                    <span className="text-xs tabular-nums font-medium">
+                      {r.tcv != null ? formatCurrency(r.tcv) : '—'}
+                    </span>
+                    {r.endOfSaleDate && (
+                      <div className="text-[10px] text-muted-foreground">EoS: {formatDate(r.endOfSaleDate)}</div>
+                    )}
+                  </td>
+                )}
                 <td className="px-4 py-3">
                   <StatusBadge status={r.atrStatus} />
                 </td>

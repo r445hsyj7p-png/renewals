@@ -16,7 +16,7 @@ import { useRenewalStore } from '@/store/renewal.store'
 import { RenewalService } from '@/services/renewal.service'
 import { XLSXService } from '@/services/xlsx.service'
 import { mockRenewals } from '@/data/mock-renewals'
-import { formatDate, formatRelativeDate, cn } from '@/lib/utils'
+import { formatDate, formatRelativeDate, formatCurrency, cn } from '@/lib/utils'
 import type { RenewalRecord } from '@/types/renewal.types'
 
 const PAGE_SIZES = [25, 50, 100]
@@ -36,6 +36,7 @@ function toDateInputValue(date: Date): string {
 export function UpcomingRenewals() {
   const [searchParams] = useSearchParams()
   const { records: storeRecords, filters, dismissRecord, restoreRecord } = useRenewalStore()
+  const hasEnrichment = storeRecords.some(r => r.enrichedAt)
   const records = storeRecords.length > 0 ? storeRecords : mockRenewals
 
   const [search, setSearch] = React.useState(searchParams.get('search') ?? filters.search)
@@ -382,6 +383,12 @@ export function UpcomingRenewals() {
                 <Th onClick={() => handleSort('daysToExpire')} active={sortField === 'daysToExpire'} desc={sortDesc}>Tage</Th>
                 <Th onClick={() => handleSort('severity')} active={sortField === 'severity'} desc={sortDesc}>Risiko</Th>
                 <Th onClick={() => handleSort('renewedQty')} active={sortField === 'renewedQty'} desc={sortDesc} className="hidden xl:table-cell">Qty</Th>
+                {hasEnrichment && (
+                  <Th onClick={() => handleSort('tcv')} active={sortField === 'tcv'} desc={sortDesc} className="hidden xl:table-cell text-right">TCV</Th>
+                )}
+                {hasEnrichment && (
+                  <Th className="hidden 2xl:table-cell">Renewal Rep</Th>
+                )}
                 {/* Action column — no sort */}
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap w-10">
                   Aktion
@@ -391,7 +398,7 @@ export function UpcomingRenewals() {
             <tbody>
               {paginated.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-14 text-center text-muted-foreground text-sm">
+                  <td colSpan={13} className="py-14 text-center text-muted-foreground text-sm">
                     {showDismissed
                       ? 'Keine Renewals gefunden.'
                       : 'Alle Renewals bearbeitet — oder Filter anpassen.'}
@@ -405,6 +412,7 @@ export function UpcomingRenewals() {
                     onDismiss={handleDismiss}
                     onRestore={handleRestore}
                     useMockData={storeRecords.length === 0}
+                    hasEnrichment={hasEnrichment}
                   />
                 ))
               )}
@@ -439,9 +447,10 @@ interface RenewalRowProps {
   onDismiss: (record: RenewalRecord, reason: 'renewed' | 'skipped') => void
   onRestore: (record: RenewalRecord) => void
   useMockData: boolean
+  hasEnrichment: boolean
 }
 
-function RenewalRow({ record: r, onDismiss, onRestore, useMockData }: RenewalRowProps) {
+function RenewalRow({ record: r, onDismiss, onRestore, useMockData, hasEnrichment }: RenewalRowProps) {
   const isDismissed = r.dismissed === true
 
   return (
@@ -509,6 +518,18 @@ function RenewalRow({ record: r, onDismiss, onRestore, useMockData }: RenewalRow
           <span className="text-muted-foreground"> / {r.targetQty ?? 0}</span>
         </div>
       </td>
+      {hasEnrichment && (
+        <td className="px-4 py-3 text-right hidden xl:table-cell">
+          <span className="text-xs tabular-nums font-medium">
+            {r.tcv != null ? formatCurrency(r.tcv) : '—'}
+          </span>
+        </td>
+      )}
+      {hasEnrichment && (
+        <td className="px-4 py-3 hidden 2xl:table-cell">
+          <span className="text-xs truncate max-w-[120px] block">{r.renewalRep || '—'}</span>
+        </td>
+      )}
 
       {/* Action */}
       <td className="px-3 py-3 text-right">

@@ -36,6 +36,61 @@ export interface ParseResult {
   duplicates: number
 }
 
+export interface EnrichmentParseResult {
+  data: Map<string, Partial<RenewalRecord>>
+  totalRows: number
+}
+
+const US_DATE_FIELDS = new Set<keyof RenewalRecord>([
+  'subscriptionStartDate', 'endOfSaleDate', 'endOfSupportDate', 'deviceShipDate',
+])
+const NUMERIC_FIELDS = new Set<keyof RenewalRecord>([
+  'subscriptionTermDays', 'subscriptionQty', 'subscriptionNetPrice',
+  'tcv', 'openAtrAcv', 'primaryQuoteTcv', 'latestQuoteTcv',
+])
+
+const ENRICHMENT_COLUMN_MAP: Record<string, keyof RenewalRecord> = {
+  'account_code': 'accountCode',
+  'Account Owner': 'accountOwner',
+  'Renewal Rep': 'renewalRep',
+  'Ent Area': 'entArea',
+  'Ent Region': 'entRegion',
+  'Ent District': 'entDistrict',
+  'Ent Territory Name': 'entTerritory',
+  'Contract Number': 'contractNumber',
+  'Opportunity Id': 'opportunityId',
+  'Contract Id': 'contractId',
+  'Product Platform': 'productPlatform',
+  'Product Suite': 'productSuite',
+  'Product Solution': 'productSolution',
+  'Product Class': 'productClass',
+  'Serial Number': 'serialNumber',
+  'Subscription Start Date': 'subscriptionStartDate',
+  'Subscription Term In Days': 'subscriptionTermDays',
+  'End Of Sale Date': 'endOfSaleDate',
+  'End Of Support Date': 'endOfSupportDate',
+  'Device Shipdate': 'deviceShipDate',
+  'Subscription Qty': 'subscriptionQty',
+  'Subscription Net Price': 'subscriptionNetPrice',
+  'TCV': 'tcv',
+  'Primary Quote Status': 'primaryQuoteStatus',
+  'Latest Quote Status': 'latestQuoteStatus',
+  'Primary Quote Forecast Category': 'primaryQuoteForecastCategory',
+  'Latest Quote Forecast Category': 'latestQuoteForecastCategory',
+  'Quoted_Unquoted': 'quotedUnquoted',
+  'Open ATR Acv': 'openAtrAcv',
+  'Primary Quote TCV': 'primaryQuoteTcv',
+  'Latest Quote TCV': 'latestQuoteTcv',
+}
+
+function parseUSDate(val: unknown): string {
+  const str = String(val).trim()
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  const d = new Date(str)
+  return isNaN(d.getTime()) ? str : d.toISOString().split('T')[0]
+}
+
 export class XLSXService {
   static async parseFile(
     file: File,
@@ -121,6 +176,52 @@ export class XLSXService {
               `Failed to parse XLSX: ${err instanceof Error ? err.message : 'Unknown error'}`,
             ),
           )
+        }
+      }
+
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsArrayBuffer(file)
+    })
+  }
+
+  static async parseEnrichmentFile(file: File): Promise<EnrichmentParseResult> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+
+      reader.onload = e => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer)
+          const workbook = XLSX.read(data, { type: 'array', cellDates: false })
+          const sheetName = workbook.SheetNames[0]
+          const worksheet = workbook.Sheets[sheetName]
+          const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { raw: false })
+
+          const result = new Map<string, Partial<RenewalRecord>>()
+
+          for (const row of rawData) {
+            const entry: Partial<RenewalRecord> = {}
+
+            for (const [col, field] of Object.entries(ENRICHMENT_COLUMN_MAP)) {
+              const val = row[col]
+              if (val === undefined || val === null || val === '') continue
+
+              if (US_DATE_FIELDS.has(field)) {
+                ;(entry as Record<string, unknown>)[field] = parseUSDate(val)
+              } else if (NUMERIC_FIELDS.has(field)) {
+                const n = parseFloat(String(val).replace(/[$,]/g, ''))
+                if (!isNaN(n)) { (entry as Record<string, unknown>)[field] = n }
+              } else {
+                ;(entry as Record<string, unknown>)[field] = String(val).trim()
+              }
+            }
+
+            const sn = String(row['Serial Number'] ?? '').trim()
+            if (sn) result.set(sn, entry)
+          }
+
+          resolve({ data: result, totalRows: rawData.length })
+        } catch (err) {
+          reject(new Error(`Failed to parse enrichment file: ${err instanceof Error ? err.message : 'Unknown error'}`))
         }
       }
 
