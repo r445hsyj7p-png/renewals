@@ -153,11 +153,44 @@ export const useRenewalStore = create<RenewalStore>()(
     }),
     {
       name: 'renewal-store',
-      // Only persist data — filters and UI state are session-scoped
       partialize: (state) => ({
-        records: state.records,
+        // Manufacturer-sourced records are session-only — re-import each session.
+        // This keeps localStorage well under the 5–10 MB quota even for large datasets.
+        records: state.records.filter(r => r.source !== 'manufacturer'),
         uploadBatches: state.uploadBatches,
       }),
+      storage: {
+        getItem: (name) => {
+          try {
+            const v = localStorage.getItem(name)
+            return v ? JSON.parse(v) : null
+          } catch {
+            return null
+          }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value))
+          } catch (e) {
+            // Quota exceeded — clear and retry with just the most recent records
+            if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+              try {
+                localStorage.removeItem(name)
+                const parsed = typeof value === 'string' ? JSON.parse(value) : value
+                if (parsed?.state?.records) {
+                  // Keep only the last 2000 records to stay under quota
+                  parsed.state.records = parsed.state.records.slice(-2000)
+                }
+                localStorage.setItem(name, JSON.stringify(parsed))
+              } catch {
+                // If still failing, clear entirely
+                localStorage.removeItem(name)
+              }
+            }
+          }
+        },
+        removeItem: (name) => localStorage.removeItem(name),
+      },
     },
   ),
 )
