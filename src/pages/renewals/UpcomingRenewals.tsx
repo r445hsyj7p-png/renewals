@@ -375,7 +375,7 @@ export function UpcomingRenewals() {
               <tr className="border-b border-border bg-muted/50">
                 <Th onClick={() => handleSort('endCustomerName')} active={sortField === 'endCustomerName'} desc={sortDesc}>Kunde</Th>
                 <Th onClick={() => handleSort('serialNumber')} active={sortField === 'serialNumber'} desc={sortDesc}>Serial Number</Th>
-                <Th onClick={() => handleSort('productCode')} active={sortField === 'productCode'} desc={sortDesc}>Produkt</Th>
+                <Th onClick={() => handleSort('productCode')} active={sortField === 'productCode'} desc={sortDesc}>Subscription / Produkt</Th>
                 <Th onClick={() => handleSort('productGroup')} active={sortField === 'productGroup'} desc={sortDesc} className="hidden md:table-cell">Gruppe</Th>
                 <Th onClick={() => handleSort('country')} active={sortField === 'country'} desc={sortDesc} className="hidden lg:table-cell">Land</Th>
                 <Th onClick={() => handleSort('atrStatus')} active={sortField === 'atrStatus'} desc={sortDesc}>Status</Th>
@@ -405,7 +405,10 @@ export function UpcomingRenewals() {
                   </td>
                 </tr>
               ) : (
-                paginated.map(r => (
+                paginated.map((r, i) => {
+                  const prev = i > 0 ? paginated[i - 1] : null
+                  const isNewSN = !prev || r.serialNumber !== prev.serialNumber || r.endCustomerName !== prev.endCustomerName
+                  return (
                   <RenewalRow
                     key={r.id}
                     record={r}
@@ -413,8 +416,10 @@ export function UpcomingRenewals() {
                     onRestore={handleRestore}
                     useMockData={storeRecords.length === 0}
                     hasEnrichment={hasEnrichment}
+                    isNewSN={isNewSN}
                   />
-                ))
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -448,42 +453,59 @@ interface RenewalRowProps {
   onRestore: (record: RenewalRecord) => void
   useMockData: boolean
   hasEnrichment: boolean
+  isNewSN: boolean
 }
 
-function RenewalRow({ record: r, onDismiss, onRestore, useMockData, hasEnrichment }: RenewalRowProps) {
+function RenewalRow({ record: r, onDismiss, onRestore, useMockData, hasEnrichment, isNewSN }: RenewalRowProps) {
   const isDismissed = r.dismissed === true
 
   return (
     <tr className={cn(
       'border-b border-border last:border-0 transition-colors',
+      isNewSN && 'border-t border-border/60',
       isDismissed
         ? 'opacity-40 hover:opacity-60'
         : 'hover:bg-muted/30'
     )}>
-      <td className="px-4 py-3">
-        <div className={cn('font-medium truncate max-w-[160px]', isDismissed && 'line-through')}>
-          {r.endCustomerName || '—'}
-        </div>
-        <div className="text-xs text-muted-foreground truncate max-w-[160px]">{r.distiName || '—'}</div>
-      </td>
-      <td className="px-4 py-3 whitespace-nowrap">
-        <span className={cn('font-mono text-xs font-medium', isDismissed && 'line-through')}>
-          {r.serialNumber || '—'}
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <div className="font-mono text-xs">{r.productCode || '—'}</div>
-        {r.renewedProductCode && r.renewedProductCode !== r.productCode && (
-          <div className="text-xs text-muted-foreground font-mono">→ {r.renewedProductCode}</div>
+      {/* Customer — only shown for new SN to avoid repetition */}
+      <td className="px-4 py-2.5 align-top">
+        {isNewSN ? (
+          <>
+            <div className={cn('font-medium truncate max-w-[160px]', isDismissed && 'line-through')}>
+              {r.endCustomerName || '—'}
+            </div>
+            <div className="text-xs text-muted-foreground truncate max-w-[160px]">{r.distiName || '—'}</div>
+          </>
+        ) : (
+          <div className="w-4" />
         )}
       </td>
-      <td className="px-4 py-3 hidden md:table-cell">
+      {/* Serial Number — badge on first row of SN group, ↳ for continuations */}
+      <td className="px-4 py-2.5 whitespace-nowrap align-top">
+        {isNewSN ? (
+          <span className={cn(
+            'inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold',
+            isDismissed && 'opacity-60 line-through'
+          )}>
+            {r.serialNumber || '—'}
+          </span>
+        ) : (
+          <span className="pl-2 text-xs text-muted-foreground select-none">↳</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5">
+        <div className="font-mono text-xs">{r.productCode || '—'}</div>
+        <div className="text-xs text-muted-foreground">
+          {r.productGroup || r.productPlatform || (r.renewedProductCode && r.renewedProductCode !== r.productCode ? `→ ${r.renewedProductCode}` : null) || '—'}
+        </div>
+      </td>
+      <td className="px-4 py-2.5 hidden md:table-cell">
         <span className="text-xs text-muted-foreground">{r.productGroup || '—'}</span>
       </td>
-      <td className="px-4 py-3 hidden lg:table-cell">
+      <td className="px-4 py-2.5 hidden lg:table-cell">
         <span className="text-xs">{r.country || '—'}</span>
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-2.5">
         {isDismissed ? (
           <Badge variant={r.dismissedReason === 'renewed' ? 'success' : 'critical'} className="text-[10px]">
             {r.dismissedReason === 'renewed' ? '✓ Erneuert' : '✗ Übersprungen'}
@@ -492,12 +514,12 @@ function RenewalRow({ record: r, onDismiss, onRestore, useMockData, hasEnrichmen
           <StatusBadge status={r.atrStatus} />
         )}
       </td>
-      <td className="px-4 py-3 whitespace-nowrap">
+      <td className="px-4 py-2.5 whitespace-nowrap">
         <span className="text-xs text-muted-foreground">
           {r.expirationDate ? formatDate(r.expirationDate) : '—'}
         </span>
       </td>
-      <td className="px-4 py-3 whitespace-nowrap">
+      <td className="px-4 py-2.5 whitespace-nowrap">
         {!isDismissed && r.daysToExpire !== undefined ? (
           <span className={cn('text-sm font-medium tabular-nums',
             r.daysToExpire <= 0 ? 'text-red-500' :
@@ -509,30 +531,30 @@ function RenewalRow({ record: r, onDismiss, onRestore, useMockData, hasEnrichmen
           </span>
         ) : <span className="text-muted-foreground">—</span>}
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-2.5">
         {!isDismissed && r.severity && <SeverityBadge severity={r.severity} />}
       </td>
-      <td className="px-4 py-3 hidden xl:table-cell">
+      <td className="px-4 py-2.5 hidden xl:table-cell">
         <div className="text-sm tabular-nums">
           <span className="text-green-500">{r.renewedQty ?? 0}</span>
           <span className="text-muted-foreground"> / {r.targetQty ?? 0}</span>
         </div>
       </td>
       {hasEnrichment && (
-        <td className="px-4 py-3 text-right hidden xl:table-cell">
+        <td className="px-4 py-2.5 text-right hidden xl:table-cell">
           <span className="text-xs tabular-nums font-medium">
             {r.tcv != null ? formatCurrency(r.tcv) : '—'}
           </span>
         </td>
       )}
       {hasEnrichment && (
-        <td className="px-4 py-3 hidden 2xl:table-cell">
+        <td className="px-4 py-2.5 hidden 2xl:table-cell">
           <span className="text-xs truncate max-w-[120px] block">{r.renewalRep || '—'}</span>
         </td>
       )}
 
       {/* Action */}
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2.5 text-right">
         {isDismissed ? (
           <button
             onClick={() => onRestore(r)}

@@ -219,7 +219,7 @@ function RiskTable({ records, hasEnrichment }: { records: RenewalRecord[]; hasEn
           <tr className="border-b border-border bg-muted/50">
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Customer</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Serial Number</th>
-            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Product</th>
+            <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Subscription / Product</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden md:table-cell">Distributor</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden lg:table-cell">Country</th>
             <th className="px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap hidden lg:table-cell">Theatre</th>
@@ -236,54 +236,66 @@ function RiskTable({ records, hasEnrichment }: { records: RenewalRecord[]; hasEn
         </thead>
         <tbody>
           {records.map((r, i) => {
-            const prevCustomer = i > 0 ? records[i - 1].endCustomerName : null
-            const isNewCustomer = r.endCustomerName !== prevCustomer
+            const prev = i > 0 ? records[i - 1] : null
+            const isNewCustomer = !prev || r.endCustomerName !== prev.endCustomerName
+            const isNewSN = isNewCustomer || !prev || r.serialNumber !== prev.serialNumber
 
             return (
               <tr
                 key={r.id}
                 className={cn(
                   'border-b border-border last:border-0 hover:bg-muted/30 transition-colors',
-                  isNewCustomer && i > 0 && 'border-t-2 border-t-border/60'
+                  isNewCustomer && i > 0 && 'border-t-2 border-t-border',
+                  !isNewCustomer && isNewSN && i > 0 && 'border-t border-dashed border-border/50',
                 )}
               >
-                <td className="px-4 py-3">
+                {/* Customer — shown once per customer group */}
+                <td className="px-4 py-2.5 align-top">
                   {isNewCustomer ? (
                     <div>
                       <div className="font-medium truncate max-w-[180px]">{r.endCustomerName || '—'}</div>
                       <div className="text-xs text-muted-foreground truncate max-w-[180px]">{r.reselName || '—'}</div>
                     </div>
                   ) : (
-                    <div className="text-xs text-muted-foreground pl-2 border-l-2 border-border truncate max-w-[180px]">
-                      ↳ {r.reselName || '—'}
-                    </div>
+                    <div className="w-4" />
                   )}
                 </td>
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <span className="font-mono text-xs font-medium">{r.serialNumber || '—'}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="font-mono text-xs">{r.productCode || '—'}</div>
-                  {(r.productPlatform || r.productGroup) && (
-                    <div className="text-xs text-muted-foreground">{r.productPlatform || r.productGroup}</div>
+
+                {/* Serial Number — shown once per SN group, ↳ for continuations */}
+                <td className="px-4 py-2.5 whitespace-nowrap align-top">
+                  {isNewSN ? (
+                    <span className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold">
+                      {r.serialNumber || '—'}
+                    </span>
+                  ) : (
+                    <span className="pl-2 text-xs text-muted-foreground select-none">↳</span>
                   )}
                 </td>
-                <td className="px-4 py-3 hidden md:table-cell">
+
+                {/* Subscription / Product — always shown, this is the line-item differentiator */}
+                <td className="px-4 py-2.5">
+                  <div className="font-mono text-xs font-medium">{r.productCode || '—'}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {r.productGroup || r.productPlatform || '—'}
+                  </div>
+                </td>
+
+                <td className="px-4 py-2.5 hidden md:table-cell">
                   <span className="text-xs text-muted-foreground truncate max-w-[120px] block">{r.distiName || '—'}</span>
                 </td>
-                <td className="px-4 py-3 hidden lg:table-cell">
+                <td className="px-4 py-2.5 hidden lg:table-cell">
                   <span className="text-xs">{r.country || '—'}</span>
                 </td>
-                <td className="px-4 py-3 hidden lg:table-cell">
+                <td className="px-4 py-2.5 hidden lg:table-cell">
                   <span className="text-xs">{r.theatre || '—'}</span>
                 </td>
                 {hasEnrichment && (
-                  <td className="px-4 py-3 hidden xl:table-cell">
+                  <td className="px-4 py-2.5 hidden xl:table-cell">
                     <span className="text-xs truncate max-w-[120px] block">{r.renewalRep || '—'}</span>
                   </td>
                 )}
                 {hasEnrichment && (
-                  <td className="px-4 py-3 text-right hidden xl:table-cell">
+                  <td className="px-4 py-2.5 text-right hidden xl:table-cell">
                     <span className="text-xs tabular-nums font-medium">
                       {r.tcv != null ? formatCurrency(r.tcv) : '—'}
                     </span>
@@ -292,10 +304,10 @@ function RiskTable({ records, hasEnrichment }: { records: RenewalRecord[]; hasEn
                     )}
                   </td>
                 )}
-                <td className="px-4 py-3">
+                <td className="px-4 py-2.5">
                   <StatusBadge status={r.atrStatus} />
                 </td>
-                <td className="px-4 py-3 whitespace-nowrap">
+                <td className="px-4 py-2.5 whitespace-nowrap">
                   {r.daysToExpire !== undefined ? (
                     <div>
                       <div className={cn('text-sm font-medium tabular-nums',
@@ -311,7 +323,7 @@ function RiskTable({ records, hasEnrichment }: { records: RenewalRecord[]; hasEn
                     </div>
                   ) : '—'}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-2.5">
                   {r.severity && <SeverityBadge severity={r.severity} />}
                 </td>
               </tr>
