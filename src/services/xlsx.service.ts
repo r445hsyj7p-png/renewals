@@ -2,6 +2,28 @@ import * as XLSX from 'xlsx'
 import type { RenewalRecord, UploadBatch } from '@/types/renewal.types'
 import { generateId } from '@/lib/utils'
 
+// Strips all non-alphanumeric characters and uppercases — makes header matching
+// tolerant of spaces, underscores, mixed case, and trailing whitespace.
+// e.g. "Serial Number", "SERIAL_NUMBER", "serial-number" all → "SERIALNUMBER"
+function normalizeKey(s: string): string {
+  return s.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+}
+
+// Build a map from normalizedKey → actual XLSX header, taken from the first row
+function buildHeaderLookup(row: Record<string, unknown>): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const key of Object.keys(row)) {
+    map.set(normalizeKey(key), key)
+  }
+  return map
+}
+
+// Resolve a column-map key against actual XLSX headers
+function resolveKey(xlsxCol: string, lookup: Map<string, string>): string | undefined {
+  // Try exact match first, then normalized
+  return lookup.get(normalizeKey(xlsxCol))
+}
+
 const COLUMN_MAP: Record<string, keyof RenewalRecord> = {
   ASCNAME: 'ascName',
   ASCID: 'ascId',
@@ -25,7 +47,7 @@ const COLUMN_MAP: Record<string, keyof RenewalRecord> = {
   DISTINAME: 'distiName',
   RESELNAME: 'reselName',
   SERIALNUMBER: 'serialNumber',
-  selling_entity: 'sellingEntity',
+  SELLINGENTITY: 'sellingEntity',
   PRODUCTGROUP: 'productGroup',
 }
 
@@ -34,11 +56,13 @@ export interface ParseResult {
   batch: UploadBatch
   errors: string[]
   duplicates: number
+  detectedHeaders: string[]
 }
 
 export interface EnrichmentParseResult {
   data: Map<string, Partial<RenewalRecord>>
   totalRows: number
+  detectedHeaders: string[]
 }
 
 const US_DATE_FIELDS = new Set<keyof RenewalRecord>([
@@ -50,43 +74,57 @@ const NUMERIC_FIELDS = new Set<keyof RenewalRecord>([
 ])
 
 const ENRICHMENT_COLUMN_MAP: Record<string, keyof RenewalRecord> = {
-  'account_code': 'accountCode',
-  'Account Owner': 'accountOwner',
-  'Renewal Rep': 'renewalRep',
-  'Ent Area': 'entArea',
-  'Ent Region': 'entRegion',
-  'Ent District': 'entDistrict',
-  'Ent Territory Name': 'entTerritory',
-  'Contract Number': 'contractNumber',
-  'Opportunity Id': 'opportunityId',
-  'Contract Id': 'contractId',
-  'Product Platform': 'productPlatform',
-  'Product Suite': 'productSuite',
-  'Product Solution': 'productSolution',
-  'Product Class': 'productClass',
-  'Serial Number': 'serialNumber',
-  'Subscription Start Date': 'subscriptionStartDate',
-  'Subscription Term In Days': 'subscriptionTermDays',
-  'End Of Sale Date': 'endOfSaleDate',
-  'End Of Support Date': 'endOfSupportDate',
-  'Device Shipdate': 'deviceShipDate',
-  'Subscription Qty': 'subscriptionQty',
-  'Subscription Net Price': 'subscriptionNetPrice',
-  'TCV': 'tcv',
-  'Primary Quote Status': 'primaryQuoteStatus',
-  'Latest Quote Status': 'latestQuoteStatus',
-  'Primary Quote Forecast Category': 'primaryQuoteForecastCategory',
-  'Latest Quote Forecast Category': 'latestQuoteForecastCategory',
-  'Quoted_Unquoted': 'quotedUnquoted',
-  'Open ATR Acv': 'openAtrAcv',
-  'Primary Quote TCV': 'primaryQuoteTcv',
-  'Latest Quote TCV': 'latestQuoteTcv',
+  ACCOUNTCODE: 'accountCode',
+  ACCOUNTOWNER: 'accountOwner',
+  RENEWALREP: 'renewalRep',
+  ENTAREA: 'entArea',
+  ENTREGION: 'entRegion',
+  ENTDISTRICT: 'entDistrict',
+  ENTTERRITORYNAME: 'entTerritory',
+  CONTRACTNUMBER: 'contractNumber',
+  OPPORTUNITYID: 'opportunityId',
+  CONTRACTID: 'contractId',
+  PRODUCTPLATFORM: 'productPlatform',
+  PRODUCTSUITE: 'productSuite',
+  PRODUCTSOLUTION: 'productSolution',
+  PRODUCTCLASS: 'productClass',
+  SERIALNUMBER: 'serialNumber',
+  SUBSCRIPTIONSTARTDATE: 'subscriptionStartDate',
+  SUBSCRIPTIONTERMINDAYS: 'subscriptionTermDays',
+  ENDOFSALEDATE: 'endOfSaleDate',
+  ENDOFSUPPORTDATE: 'endOfSupportDate',
+  DEVICESHIPDATE: 'deviceShipDate',
+  SUBSCRIPTIONQTY: 'subscriptionQty',
+  SUBSCRIPTIONNETPRICE: 'subscriptionNetPrice',
+  TCV: 'tcv',
+  PRIMARYQUOTESTATUS: 'primaryQuoteStatus',
+  LATESTQUOTESTATUS: 'latestQuoteStatus',
+  PRIMARYQUOTEFORECASTCATEGORY: 'primaryQuoteForecastCategory',
+  LATESTQUOTEFORECASTCATEGORY: 'latestQuoteForecastCategory',
+  QUOTEDUNQUOTED: 'quotedUnquoted',
+  OPENATRACK: 'openAtrAcv',
+  OPENATRACV: 'openAtrAcv',
+  PRIMARYQUOTETCV: 'primaryQuoteTcv',
+  LATESTQUOTETCV: 'latestQuoteTcv',
 }
 
-function parseUSDate(val: unknown): string {
+// Handles JS Date objects (from cellDates:true), Excel serial numbers, US dates, ISO dates
+function parseAnyDate(val: unknown): string {
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? '' : val.toISOString().split('T')[0]
+  }
+  if (typeof val === 'number' && val > 0) {
+    // Excel serial number: days since 1899-12-30
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000))
+    return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0]
+  }
   const str = String(val).trim()
-  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  if (!str) return ''
+  // Already ISO
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10)
+  // US MM/DD/YYYY
+  const usm = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (usm) return `${usm[3]}-${usm[1].padStart(2, '0')}-${usm[2].padStart(2, '0')}`
   const d = new Date(str)
   return isNaN(d.getTime()) ? str : d.toISOString().split('T')[0]
 }
@@ -106,8 +144,17 @@ export class XLSXService {
           const sheetName = workbook.SheetNames[0]
           const worksheet = workbook.Sheets[sheetName]
           const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
-            raw: false,
+            raw: true,
           })
+
+          if (rawData.length === 0) {
+            reject(new Error('The file appears to be empty or has no data rows'))
+            return
+          }
+
+          // Build case/space-insensitive header lookup from first row
+          const headerLookup = buildHeaderLookup(rawData[0])
+          const detectedHeaders = [...headerLookup.values()]
 
           const errors: string[] = []
           const existingIds = new Set(
@@ -122,25 +169,21 @@ export class XLSXService {
               const record: Partial<RenewalRecord> = { id: generateId() }
 
               Object.entries(COLUMN_MAP).forEach(([xlsxCol, field]) => {
-                const val = row[xlsxCol]
-                if (val !== undefined && val !== null && val !== '') {
-                  if (field === 'targetQty' || field === 'renewedQty') {
-                    ;(record as Record<string, unknown>)[field] = Number(val) || 0
-                  } else if (field === 'expirationDate') {
-                    const d = new Date(val as string)
-                    ;(record as Record<string, unknown>)[field] = isNaN(d.getTime())
-                      ? String(val)
-                      : d.toISOString().split('T')[0]
-                  } else {
-                    ;(record as Record<string, unknown>)[field] = String(val).trim()
-                  }
+                const actualKey = resolveKey(xlsxCol, headerLookup)
+                const val = actualKey ? row[actualKey] : undefined
+                if (val === undefined || val === null || val === '') return
+
+                if (field === 'targetQty' || field === 'renewedQty') {
+                  ;(record as Record<string, unknown>)[field] = Number(val) || 0
+                } else if (field === 'expirationDate') {
+                  ;(record as Record<string, unknown>)[field] = parseAnyDate(val)
+                } else {
+                  ;(record as Record<string, unknown>)[field] = String(val).trim()
                 }
               })
 
               if (!record.serialNumber && !record.productCode) {
-                errors.push(
-                  `Row ${i + 2}: Missing required fields (SERIALNUMBER or PRODUCTCODE)`,
-                )
+                errors.push(`Row ${i + 2}: Missing Serial Number and Product Code`)
               }
 
               const dupKey =
@@ -151,12 +194,7 @@ export class XLSXService {
 
               return record as RenewalRecord
             })
-            .filter((_, i) => {
-              const row = rawData[i]
-              return (
-                row['PRODUCTCODE'] || row['SERIALNUMBER'] || row['ENDCUSTOMERNAME']
-              )
-            })
+            .filter(r => r.productCode || r.serialNumber || r.endCustomerName)
 
           const batch: UploadBatch = {
             id: generateId(),
@@ -165,11 +203,11 @@ export class XLSXService {
             uploadedAt: new Date().toISOString(),
             recordCount: records.length,
             status: errors.length > 0 ? 'error' : 'complete',
-            errorMessage: errors.length > 0 ? errors.join('; ') : undefined,
+            errorMessage: errors.length > 0 ? errors.slice(0, 5).join('; ') : undefined,
             duplicatesFound: duplicates,
           }
 
-          resolve({ records, batch, errors, duplicates })
+          resolve({ records, batch, errors, duplicates, detectedHeaders })
         } catch (err) {
           reject(
             new Error(
@@ -191,35 +229,49 @@ export class XLSXService {
       reader.onload = e => {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer)
-          const workbook = XLSX.read(data, { type: 'array', cellDates: false })
+          // cellDates:true → date cells become JS Date objects (most reliable)
+          const workbook = XLSX.read(data, { type: 'array', cellDates: true })
           const sheetName = workbook.SheetNames[0]
           const worksheet = workbook.Sheets[sheetName]
-          const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { raw: false })
+          // raw:true → keeps Date objects, numbers as numbers (not locale-formatted strings)
+          const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { raw: true })
+
+          if (rawData.length === 0) {
+            reject(new Error('The file appears to be empty'))
+            return
+          }
+
+          // Build normalized header lookup from first row
+          const headerLookup = buildHeaderLookup(rawData[0])
+          const detectedHeaders = [...headerLookup.values()]
 
           const result = new Map<string, Partial<RenewalRecord>>()
+          const snKey = resolveKey('SERIALNUMBER', headerLookup)
 
           for (const row of rawData) {
             const entry: Partial<RenewalRecord> = {}
 
             for (const [col, field] of Object.entries(ENRICHMENT_COLUMN_MAP)) {
-              const val = row[col]
+              const actualKey = resolveKey(col, headerLookup)
+              const val = actualKey ? row[actualKey] : undefined
               if (val === undefined || val === null || val === '') continue
 
               if (US_DATE_FIELDS.has(field)) {
-                ;(entry as Record<string, unknown>)[field] = parseUSDate(val)
+                const parsed = parseAnyDate(val)
+                if (parsed) { (entry as Record<string, unknown>)[field] = parsed }
               } else if (NUMERIC_FIELDS.has(field)) {
-                const n = parseFloat(String(val).replace(/[$,]/g, ''))
+                const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[$,\s]/g, ''))
                 if (!isNaN(n)) { (entry as Record<string, unknown>)[field] = n }
               } else {
                 ;(entry as Record<string, unknown>)[field] = String(val).trim()
               }
             }
 
-            const sn = String(row['Serial Number'] ?? '').trim()
+            const sn = snKey ? String(row[snKey] ?? '').trim() : ''
             if (sn) result.set(sn, entry)
           }
 
-          resolve({ data: result, totalRows: rawData.length })
+          resolve({ data: result, totalRows: rawData.length, detectedHeaders })
         } catch (err) {
           reject(new Error(`Failed to parse enrichment file: ${err instanceof Error ? err.message : 'Unknown error'}`))
         }

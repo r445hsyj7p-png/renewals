@@ -17,7 +17,7 @@ interface UploadTask {
   file: File
   status: 'pending' | 'parsing' | 'complete' | 'error'
   progress: number
-  result?: { recordCount: number; duplicates: number }
+  result?: { recordCount: number; duplicates: number; detectedHeaders: string[] }
   error?: string
 }
 
@@ -26,7 +26,7 @@ interface EnrichmentTask {
   file: File
   status: 'pending' | 'parsing' | 'complete' | 'error'
   progress: number
-  result?: { totalRows: number; matched: number; unmatched: number }
+  result?: { totalRows: number; matched: number; unmatched: number; detectedHeaders: string[] }
   error?: string
 }
 
@@ -71,7 +71,11 @@ export function ImportData() {
         updateTask(task.id, {
           status: 'complete',
           progress: 100,
-          result: { recordCount: result.records.length, duplicates: result.duplicates },
+          result: {
+            recordCount: result.records.length,
+            duplicates: result.duplicates,
+            detectedHeaders: result.detectedHeaders,
+          },
         })
         toast.success(`Imported ${result.records.length} records from ${task.file.name}`)
       } catch (err) {
@@ -98,9 +102,10 @@ export function ImportData() {
       try {
         await new Promise(r => setTimeout(r, 200))
         updateEnrichmentTask(task.id, { progress: 60 })
-        const { data, totalRows } = await XLSXService.parseEnrichmentFile(task.file)
+        const enrichResult = await XLSXService.parseEnrichmentFile(task.file)
         updateEnrichmentTask(task.id, { progress: 85 })
 
+        const { data, totalRows } = enrichResult
         const matched = records.filter(r => r.serialNumber && data.has(r.serialNumber)).length
         const unmatched = data.size - matched
 
@@ -108,7 +113,7 @@ export function ImportData() {
         updateEnrichmentTask(task.id, {
           status: 'complete',
           progress: 100,
-          result: { totalRows, matched, unmatched },
+          result: { totalRows, matched, unmatched, detectedHeaders: enrichResult.detectedHeaders },
         })
         toast.success(`Enrichment complete: ${matched} records updated from ${task.file.name}`)
       } catch (err) {
@@ -433,10 +438,27 @@ function TaskRow({ task, onRemove }: { task: UploadTask; onRemove: () => void })
         </div>
       )}
       {task.status === 'complete' && task.result && (
-        <div className="mt-2 flex gap-2">
-          <Badge variant="success">{task.result.recordCount} records</Badge>
-          {task.result.duplicates > 0 && (
-            <Badge variant="medium">{task.result.duplicates} duplicates</Badge>
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="success">{task.result.recordCount} records</Badge>
+            {task.result.duplicates > 0 && (
+              <Badge variant="medium">{task.result.duplicates} duplicates</Badge>
+            )}
+            {task.result.recordCount === 0 && (
+              <Badge variant="critical">0 records — Spaltennamen prüfen</Badge>
+            )}
+          </div>
+          {task.result.recordCount === 0 && task.result.detectedHeaders.length > 0 && (
+            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2">
+              <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mb-1">
+                Erkannte Spalten in der Datei:
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {task.result.detectedHeaders.map(h => (
+                  <code key={h} className="text-[10px] rounded bg-muted px-1 py-0.5 font-mono">{h}</code>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -473,11 +495,28 @@ function EnrichmentTaskRow({ task, onRemove }: { task: EnrichmentTask; onRemove:
         </div>
       )}
       {task.status === 'complete' && task.result && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Badge variant="info">{task.result.totalRows} rows parsed</Badge>
-          <Badge variant="success">{task.result.matched} records enriched</Badge>
-          {task.result.unmatched > 0 && (
-            <Badge variant="medium">{task.result.unmatched} unmatched SNs</Badge>
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="info">{task.result.totalRows} rows parsed</Badge>
+            <Badge variant="success">{task.result.matched} records enriched</Badge>
+            {task.result.unmatched > 0 && (
+              <Badge variant="medium">{task.result.unmatched} unmatched SNs</Badge>
+            )}
+            {task.result.matched === 0 && task.result.totalRows > 0 && (
+              <Badge variant="critical">0 matches — Serial Number prüfen</Badge>
+            )}
+          </div>
+          {task.result.matched === 0 && task.result.detectedHeaders.length > 0 && (
+            <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2">
+              <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 mb-1">
+                Erkannte Spalten in der Datei:
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {task.result.detectedHeaders.map(h => (
+                  <code key={h} className="text-[10px] rounded bg-muted px-1 py-0.5 font-mono">{h}</code>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}
