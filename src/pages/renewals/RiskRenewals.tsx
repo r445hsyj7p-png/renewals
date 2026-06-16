@@ -71,7 +71,7 @@ export function RiskRenewals() {
     [critical, high, atRisk]
   )
 
-  const hasEnrichment = enriched.some(r => r.enrichedAt)
+  const hasEnrichment = enriched.some(r => r.source === 'manufacturer' || r.enrichedAt)
 
   const handleExport = () => {
     XLSXService.exportToXLSX(allRisk, `risk-renewals-${new Date().toISOString().split('T')[0]}.xlsx`)

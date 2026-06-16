@@ -59,8 +59,8 @@ export interface ParseResult {
   detectedHeaders: string[]
 }
 
-export interface EnrichmentParseResult {
-  data: Map<string, Partial<RenewalRecord>>
+export interface ManufacturerParseResult {
+  records: RenewalRecord[]
   totalRows: number
   detectedHeaders: string[]
 }
@@ -73,10 +73,27 @@ const NUMERIC_FIELDS = new Set<keyof RenewalRecord>([
   'tcv', 'openAtrAcv', 'primaryQuoteTcv', 'latestQuoteTcv',
 ])
 
-const ENRICHMENT_COLUMN_MAP: Record<string, keyof RenewalRecord> = {
+const MANUFACTURER_COLUMN_MAP: Record<string, keyof RenewalRecord> = {
+  SERIALNUMBER: 'serialNumber',
+  PRODUCTCODE: 'productCode',
+  ENDCUSTOMERACCOUNTNAME: 'endCustomerName',
+  DISTRIBUTORNAME: 'distiName',
+  AUTHORIZEDRESELERNAME: 'reselName',
+  ENTTHEATRE: 'theatre',
+  SUBSCRIPTIONENDDATE: 'expirationDate',
+  AUTHCODE: 'authCode',
+  FISCALQTR: 'reportingFiscalQtr',
+  PRODUCTSUITE: 'productGroup',
+  SUBSCRIPTIONNETPRICETCV: 'tcv',
+  SUBSCRIPTIONSTARTDATE: 'subscriptionStartDate',
+  SUBSCRIPTIONTERMINDAYS: 'subscriptionTermDays',
+  ENDOFSALEDATE: 'endOfSaleDate',
+  ENDOFSUPPORTDATE: 'endOfSupportDate',
+  DEVICESHIPDATE: 'deviceShipDate',
+  SUBSCRIPTIONQTY: 'subscriptionQty',
+  RENEWALREP: 'renewalRep',
   ACCOUNTCODE: 'accountCode',
   ACCOUNTOWNER: 'accountOwner',
-  RENEWALREP: 'renewalRep',
   ENTAREA: 'entArea',
   ENTREGION: 'entRegion',
   ENTDISTRICT: 'entDistrict',
@@ -85,27 +102,15 @@ const ENRICHMENT_COLUMN_MAP: Record<string, keyof RenewalRecord> = {
   OPPORTUNITYID: 'opportunityId',
   CONTRACTID: 'contractId',
   PRODUCTPLATFORM: 'productPlatform',
-  PRODUCTSUITE: 'productSuite',
+  PRODUCTSUITERAW: 'productSuite',
   PRODUCTSOLUTION: 'productSolution',
   PRODUCTCLASS: 'productClass',
-  SERIALNUMBER: 'serialNumber',
-  SUBSCRIPTIONSTARTDATE: 'subscriptionStartDate',
-  SUBSCRIPTIONTERMINDAYS: 'subscriptionTermDays',
-  ENDOFSALEDATE: 'endOfSaleDate',
-  ENDOFSUPPORTDATE: 'endOfSupportDate',
-  DEVICESHIPDATE: 'deviceShipDate',
-  SUBSCRIPTIONQTY: 'subscriptionQty',
-  SUBSCRIPTIONNETPRICE: 'subscriptionNetPrice',
-  TCV: 'tcv',
   PRIMARYQUOTESTATUS: 'primaryQuoteStatus',
   LATESTQUOTESTATUS: 'latestQuoteStatus',
   PRIMARYQUOTEFORECASTCATEGORY: 'primaryQuoteForecastCategory',
   LATESTQUOTEFORECASTCATEGORY: 'latestQuoteForecastCategory',
   QUOTEDUNQUOTED: 'quotedUnquoted',
-  OPENATRACK: 'openAtrAcv',
   OPENATRACV: 'openAtrAcv',
-  PRIMARYQUOTETCV: 'primaryQuoteTcv',
-  LATESTQUOTETCV: 'latestQuoteTcv',
 }
 
 // Handles JS Date objects (from cellDates:true), Excel serial numbers, US dates, ISO dates
@@ -222,19 +227,18 @@ export class XLSXService {
     })
   }
 
-  static async parseEnrichmentFile(file: File): Promise<EnrichmentParseResult> {
+  static async parseEnrichmentFile(file: File): Promise<ManufacturerParseResult> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
 
       reader.onload = e => {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer)
-          // cellDates:true → date cells become JS Date objects (most reliable)
-          const workbook = XLSX.read(data, { type: 'array', cellDates: true })
+          // raw:false → dates returned as formatted strings (manufacturer file uses text MM/DD/YYYY)
+          const workbook = XLSX.read(data, { type: 'array' })
           const sheetName = workbook.SheetNames[0]
           const worksheet = workbook.Sheets[sheetName]
-          // raw:true → keeps Date objects, numbers as numbers (not locale-formatted strings)
-          const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { raw: true })
+          const rawData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { raw: false })
 
           if (rawData.length === 0) {
             reject(new Error('The file appears to be empty'))
@@ -245,33 +249,68 @@ export class XLSXService {
           const headerLookup = buildHeaderLookup(rawData[0])
           const detectedHeaders = [...headerLookup.values()]
 
-          const result = new Map<string, Partial<RenewalRecord>>()
-          const snKey = resolveKey('SERIALNUMBER', headerLookup)
+          // Special handling: "Product Suite" appears in two map entries — one for productGroup, one for productSuite.
+          // We resolve it once here to avoid confusion; normalizeKey("PRODUCTSUITERAW") won't match anything,
+          // so we handle productSuite separately in the row loop.
+          const records: RenewalRecord[] = []
 
           for (const row of rawData) {
-            const entry: Partial<RenewalRecord> = {}
+            const serialNumber = (() => {
+              const k = resolveKey('SERIALNUMBER', headerLookup)
+              return k ? String(row[k] ?? '').trim() : ''
+            })()
+            const productCode = (() => {
+              const k = resolveKey('PRODUCTCODE', headerLookup)
+              return k ? String(row[k] ?? '').trim() : ''
+            })()
 
-            for (const [col, field] of Object.entries(ENRICHMENT_COLUMN_MAP)) {
+            // Skip rows where both SN and ProductCode are empty
+            if (!serialNumber && !productCode) continue
+
+            const record: Partial<RenewalRecord> = {
+              id: generateId(),
+              source: 'manufacturer',
+              serialNumber,
+              productCode,
+            }
+
+            for (const [col, field] of Object.entries(MANUFACTURER_COLUMN_MAP)) {
+              // Skip the two fields we already set above
+              if (field === 'serialNumber' || field === 'productCode') continue
+              // PRODUCTSUITERAW is a placeholder key that won't resolve — skip
+              if (col === 'PRODUCTSUITERAW') continue
+
               const actualKey = resolveKey(col, headerLookup)
               const val = actualKey ? row[actualKey] : undefined
               if (val === undefined || val === null || val === '') continue
 
-              if (US_DATE_FIELDS.has(field)) {
+              if (field === 'expirationDate' || US_DATE_FIELDS.has(field)) {
                 const parsed = parseAnyDate(val)
-                if (parsed) { (entry as Record<string, unknown>)[field] = parsed }
+                if (parsed) { (record as Record<string, unknown>)[field] = parsed }
               } else if (NUMERIC_FIELDS.has(field)) {
                 const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[$,\s]/g, ''))
-                if (!isNaN(n)) { (entry as Record<string, unknown>)[field] = n }
+                if (!isNaN(n)) { (record as Record<string, unknown>)[field] = n }
               } else {
-                ;(entry as Record<string, unknown>)[field] = String(val).trim()
+                ;(record as Record<string, unknown>)[field] = String(val).trim()
               }
             }
 
-            const sn = snKey ? String(row[snKey] ?? '').trim() : ''
-            if (sn) result.set(sn, entry)
+            // productSuite: same source column "Product Suite" — set separately
+            const productSuiteKey = resolveKey('PRODUCTSUITE', headerLookup)
+            if (productSuiteKey) {
+              const psVal = row[productSuiteKey]
+              if (psVal !== undefined && psVal !== null && psVal !== '') {
+                record.productSuite = String(psVal).trim()
+              }
+            }
+
+            // openAtrAcv: the column has a trailing space — normalizeKey strips it, so OPENATRACV resolves correctly
+            // (already handled in the loop above via OPENATRACV → openAtrAcv)
+
+            records.push(record as RenewalRecord)
           }
 
-          resolve({ data: result, totalRows: rawData.length, detectedHeaders })
+          resolve({ records, totalRows: rawData.length, detectedHeaders })
         } catch (err) {
           reject(new Error(`Failed to parse enrichment file: ${err instanceof Error ? err.message : 'Unknown error'}`))
         }

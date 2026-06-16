@@ -36,7 +36,7 @@ function toDateInputValue(date: Date): string {
 export function UpcomingRenewals() {
   const [searchParams] = useSearchParams()
   const { records: storeRecords, filters, dismissRecord, restoreRecord } = useRenewalStore()
-  const hasEnrichment = storeRecords.some(r => r.enrichedAt)
+  const hasEnrichment = storeRecords.some(r => r.source === 'manufacturer' || r.enrichedAt)
   const records = storeRecords.length > 0 ? storeRecords : mockRenewals
 
   const [search, setSearch] = React.useState(searchParams.get('search') ?? filters.search)

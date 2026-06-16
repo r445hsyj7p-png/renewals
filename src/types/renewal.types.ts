@@ -38,6 +38,7 @@ export interface RenewalRecord {
   dismissed?: boolean
   dismissedReason?: 'renewed' | 'skipped'
   dismissedAt?: string
+  source?: 'renewal' | 'manufacturer'
   // Manufacturer enrichment (joined by Serial Number)
   renewalRep?: string
   accountCode?: string

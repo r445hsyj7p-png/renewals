@@ -21,7 +21,7 @@ interface RenewalStore {
   resetFilters: () => void
   setSelectedBatch: (batchId: string | null) => void
   clearAll: () => void
-  enrichRecords: (data: Map<string, Partial<RenewalRecord>>) => void
+  importManufacturerRecords: (manufacturerRecords: RenewalRecord[]) => void
 }
 
 const defaultFilters: FilterState = {
@@ -101,14 +101,55 @@ export const useRenewalStore = create<RenewalStore>()(
       clearAll: () =>
         set({ records: [], uploadBatches: [], filters: defaultFilters, selectedBatchId: null }),
 
-      enrichRecords: (data) =>
-        set(state => ({
-          records: state.records.map(r => {
-            const enrichment = r.serialNumber ? data.get(r.serialNumber) : undefined
-            if (!enrichment) return r
-            return { ...r, ...enrichment, enrichedAt: new Date().toISOString() }
-          }),
-        })),
+      importManufacturerRecords: (manufacturerRecords) =>
+        set(state => {
+          // Build lookup of existing records by SN+ProductCode for matching
+          const existingKey = (sn: string, pc: string) => `${sn}||${pc}`
+          const existingMap = new Map(
+            state.records.map(r => [existingKey(r.serialNumber ?? '', r.productCode ?? ''), r.id])
+          )
+
+          const updatedRecords = [...state.records]
+          const idSet = new Set(state.records.map(r => r.id))
+
+          const enrichFields: (keyof RenewalRecord)[] = [
+            'tcv', 'renewalRep', 'accountCode', 'accountOwner', 'entArea', 'entRegion',
+            'entDistrict', 'entTerritory', 'contractNumber', 'opportunityId', 'contractId',
+            'productPlatform', 'productSuite', 'productSolution', 'productClass',
+            'subscriptionStartDate', 'subscriptionTermDays', 'endOfSaleDate', 'endOfSupportDate',
+            'deviceShipDate', 'subscriptionQty', 'primaryQuoteStatus', 'latestQuoteStatus',
+            'primaryQuoteForecastCategory', 'latestQuoteForecastCategory', 'quotedUnquoted',
+            'openAtrAcv', 'reportingFiscalQtr',
+          ]
+
+          for (const mfr of manufacturerRecords) {
+            const key = existingKey(mfr.serialNumber ?? '', mfr.productCode ?? '')
+            const existingId = existingMap.get(key)
+
+            if (existingId) {
+              // Enrich existing record
+              const idx = updatedRecords.findIndex(r => r.id === existingId)
+              if (idx >= 0) {
+                const merged: RenewalRecord = { ...updatedRecords[idx], enrichedAt: new Date().toISOString() }
+                for (const field of enrichFields) {
+                  const val = (mfr as unknown as Record<string, unknown>)[field as string]
+                  if (val !== undefined && val !== null && val !== '') {
+                    (merged as unknown as Record<string, unknown>)[field as string] = val
+                  }
+                }
+                updatedRecords[idx] = merged
+              }
+            } else {
+              // Add as new record (not already in store)
+              if (!idSet.has(mfr.id)) {
+                updatedRecords.push({ ...mfr, enrichedAt: new Date().toISOString() })
+                idSet.add(mfr.id)
+              }
+            }
+          }
+
+          return { records: updatedRecords }
+        }),
     }),
     {
       name: 'renewal-store',

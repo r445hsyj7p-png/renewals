@@ -26,14 +26,14 @@ interface EnrichmentTask {
   file: File
   status: 'pending' | 'parsing' | 'complete' | 'error'
   progress: number
-  result?: { totalRows: number; matched: number; unmatched: number; detectedHeaders: string[] }
+  result?: { totalRows: number; matched: number; newCount: number; detectedHeaders: string[] }
   error?: string
 }
 
 type Tab = 'renewal' | 'manufacturer'
 
 export function ImportData() {
-  const { records, addRecords, uploadBatches, removeBatch, clearAll, enrichRecords } = useRenewalStore()
+  const { records, addRecords, uploadBatches, removeBatch, clearAll, importManufacturerRecords } = useRenewalStore()
   const [activeTab, setActiveTab] = React.useState<Tab>('renewal')
   const [tasks, setTasks] = React.useState<UploadTask[]>([])
   const [enrichmentTasks, setEnrichmentTasks] = React.useState<EnrichmentTask[]>([])
@@ -105,17 +105,19 @@ export function ImportData() {
         const enrichResult = await XLSXService.parseEnrichmentFile(task.file)
         updateEnrichmentTask(task.id, { progress: 85 })
 
-        const { data, totalRows } = enrichResult
-        const matched = records.filter(r => r.serialNumber && data.has(r.serialNumber)).length
-        const unmatched = data.size - matched
+        const { records: mfrRecords, totalRows, detectedHeaders } = enrichResult
+        const existingCount = records.filter(r =>
+          mfrRecords.some(m => m.serialNumber === r.serialNumber && m.productCode === r.productCode)
+        ).length
+        const newCount = mfrRecords.length - existingCount
 
-        enrichRecords(data)
+        importManufacturerRecords(mfrRecords)
         updateEnrichmentTask(task.id, {
           status: 'complete',
           progress: 100,
-          result: { totalRows, matched, unmatched, detectedHeaders: enrichResult.detectedHeaders },
+          result: { totalRows, matched: existingCount, newCount, detectedHeaders },
         })
-        toast.success(`Enrichment complete: ${matched} records updated from ${task.file.name}`)
+        toast.success(`Import complete: ${existingCount} enriched, ${newCount} new from ${task.file.name}`)
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error'
         updateEnrichmentTask(task.id, { status: 'error', progress: 0, error: msg })
@@ -498,11 +500,11 @@ function EnrichmentTaskRow({ task, onRemove }: { task: EnrichmentTask; onRemove:
         <div className="mt-2 space-y-2">
           <div className="flex flex-wrap gap-2">
             <Badge variant="info">{task.result.totalRows} rows parsed</Badge>
-            <Badge variant="success">{task.result.matched} records enriched</Badge>
-            {task.result.unmatched > 0 && (
-              <Badge variant="medium">{task.result.unmatched} unmatched SNs</Badge>
+            <Badge variant="success">{task.result.matched} enriched</Badge>
+            {task.result.newCount > 0 && (
+              <Badge variant="info">{task.result.newCount} new subscriptions added</Badge>
             )}
-            {task.result.matched === 0 && task.result.totalRows > 0 && (
+            {task.result.matched === 0 && task.result.newCount === 0 && task.result.totalRows > 0 && (
               <Badge variant="critical">0 matches — Serial Number prüfen</Badge>
             )}
           </div>
